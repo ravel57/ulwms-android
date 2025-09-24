@@ -47,7 +47,8 @@ class ScriptLoader(
 	/**
 	 *  Основной способ: InMemoryDexClassLoader (API 26+)
 	 */
-	fun loadInMemory(scriptDex: File, input: Map<String, Any?>): Map<String, Any?> {
+	@SuppressLint("DiscouragedPrivateApi")
+	fun loadInMemory(scriptDex: File, input: Map<String, Any?>): Map<String, Any?>? {
 		require(scriptDex.exists()) { "Нет ${scriptDex.absolutePath}" }
 
 		val optimizedDir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
@@ -61,52 +62,13 @@ class ScriptLoader(
 		val prevCL = Thread.currentThread().contextClassLoader
 		Thread.currentThread().contextClassLoader = dexLoader
 		try {
-			// --- Читаем META-INF руками через ZipFile ---
-			val meta = mutableMapOf<String, String>()
-			ZipFile(scriptDex).use { zip ->
-				listOf(
-					"META-INF/dgminfo",
-					"META-INF/services/org.codehaus.groovy.vmplugin.VMPlugin",
-					"META-INF/services/org.codehaus.groovy.vmplugin.VMPluginFactory"
-				).forEach { path ->
-					val entry = zip.getEntry(path) ?: error("В $scriptDex нет $path")
-					zip.getInputStream(entry).bufferedReader().use { r ->
-						meta[path] = r.readText().trim()
-					}
-				}
-			}
-
-			// --- GroovySystem и VMPlugin ---
-			dexLoader.loadClass("groovy.lang.GroovySystem")
-
-			val vmPluginFactoryCls = dexLoader.loadClass("org.codehaus.groovy.vmplugin.VMPluginFactory")
-			val java8PluginCls = dexLoader.loadClass("org.codehaus.groovy.vmplugin.v8.Java8")
-
-			val pluginInstance = java8PluginCls.getDeclaredConstructor().newInstance()
-			val pluginField = vmPluginFactoryCls.declaredFields.firstOrNull { f ->
-				java8PluginCls.isAssignableFrom(f.type)
-			} ?: throw IllegalStateException("Не найдено поле для VMPlugin в VMPluginFactory")
-
-			pluginField.isAccessible = true
-			pluginField.set(null, pluginInstance)
-
-
-			// --- шаг 2. Загружаем твой скрипт ---
 			val scriptCls = dexLoader.loadClass("ru.ravel.scripts.DateAdderScript")
 			val ctor = scriptCls.getDeclaredConstructor().apply { isAccessible = true }
 			val scriptObj = ctor.newInstance()
 
-			// --- шаг 3. Передаём binding ---
-			val bindingCls = dexLoader.loadClass("groovy.lang.Binding")
-			val binding = bindingCls.getConstructor(Map::class.java)
-				.newInstance(mapOf("input" to input))
-			scriptCls.getMethod("setBinding", bindingCls).invoke(scriptObj, binding)
-
-			// --- шаг 4. Вызываем run() ---
-			val result = scriptCls.getMethod("run").invoke(scriptObj)
+			val result = scriptCls.getMethod("run", Map::class.java).invoke(scriptObj, input)
 			@Suppress("UNCHECKED_CAST")
 			return (result as? Map<String, Any?>)
-				?: error("Скрипт вернул не Map, а ${result?.javaClass?.name}")
 		} finally {
 			Thread.currentThread().contextClassLoader = prevCL
 		}

@@ -43,11 +43,8 @@ class MainActivity : AppCompatActivity() {
 
 		lifecycleScope.launch {
 			val loader = ScriptLoader(this@MainActivity)
-			val scriptFile = loader.ensureDateAdderScript(
-				url = "https://dl.ravel57.ru/dZA5buPHD-"
-			)
-			val input: Map<String, Any?> = mapOf("a" to 5, "b" to 7)
-			val result = loader.loadInMemory(scriptFile, input)
+			val dexFile = loader.ensureDateAdderScript("https://dl.ravel57.ru/gYKNBbjAXy")
+			val result = loader.loadInMemory(dexFile, mapOf("a" to 5, "b" to 7))
 			Log.d("ScriptResult", "Result: $result")
 		}
 

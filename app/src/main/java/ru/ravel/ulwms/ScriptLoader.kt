@@ -2,105 +2,46 @@ package ru.ravel.ulwms
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.system.Os
+import android.system.OsConstants
+import android.util.Log
 import dalvik.system.DexClassLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.CipherSuite
 import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.TlsVersion
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
+import okio.sink
+import okio.buffer
+import okio.source
 
 class ScriptLoader(
 	private val context: Context,
 ) {
-
-	private val GROOVY_ALL_DEX = "groovy-runtime-all.dex.jar"
-	private val httpClient: OkHttpClient by lazy {
-		val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-			.tlsVersions(TlsVersion.TLS_1_2) // отключаем TLS 1.3
-			.allEnabledCipherSuites()
-			.build()
-
-		OkHttpClient.Builder()
-			.protocols(listOf(Protocol.HTTP_1_1))
-			.connectionSpecs(listOf(spec, ConnectionSpec.CLEARTEXT))
-			.retryOnConnectionFailure(true)
-			.connectTimeout(20, TimeUnit.SECONDS)
-			.readTimeout(60, TimeUnit.SECONDS)
-			.callTimeout(90, TimeUnit.SECONDS)
-			.build()
-	}
-
-	/**
-	 * Если сервер отдаёт dex.jar — достаём из него classes.dex
-	 */
-	suspend fun downloadDexFromJar(url: String): ByteArray = withContext(Dispatchers.IO) {
-		val maxAttempts = 5
-		var attempt = 0
-
-		while (attempt < maxAttempts) {
-			attempt++
-
-			val req = Request.Builder()
-				.url(url)
-				.header("Accept-Encoding", "identity")
-				.header("Connection", "close")
-				.build()
-
-			val resp = try {
-				httpClient.newCall(req).execute()
-			} catch (e: IOException) {
-				if (attempt >= maxAttempts) throw e else continue
-			}
-
-			resp.use { r ->
-				if (!r.isSuccessful) {
-					if (attempt >= maxAttempts) error("HTTP ${r.code}") else return@use
-				}
-				val body = r.body ?: error("Empty body")
-
-				try {
-					body.byteStream().use { stream ->
-						ZipInputStream(stream.buffered()).use { zis ->
-							var entry = zis.nextEntry
-							val out = java.io.ByteArrayOutputStream()
-							while (entry != null) {
-								if (!entry.isDirectory && entry.name == "classes.dex") {
-									val buf = ByteArray(256 * 1024)
-									while (true) {
-										val read = try {
-											zis.read(buf)
-										} catch (e: javax.net.ssl.SSLProtocolException) {
-											// оборвало соединение → попробуем заново
-											break
-										}
-										if (read == -1) break
-										out.write(buf, 0, read)
-									}
-									if (out.size() > 0) {
-										return@withContext out.toByteArray()
-									} else {
-										if (attempt >= maxAttempts) error("Не удалось дочитать classes.dex")
-										else break // retry
-									}
-								}
-								entry = zis.nextEntry
-							}
-						}
-					}
-				} catch (e: javax.net.ssl.SSLProtocolException) {
-					if (attempt >= maxAttempts) throw e else continue
-				}
-			}
-		}
-		error("В dex.jar не найден classes.dex")
-	}
+	val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+		.tlsVersions(TlsVersion.TLS_1_2)
+		.cipherSuites(
+			CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			CipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+		)
+		.build()
+	val httpClient = OkHttpClient.Builder()
+		.connectionSpecs(listOf(spec, ConnectionSpec.CLEARTEXT))
+		.protocols(listOf(Protocol.HTTP_1_1))
+		.retryOnConnectionFailure(false)
+		.build()
 
 
 	/**
@@ -110,115 +51,67 @@ class ScriptLoader(
 		require(scriptDex.exists()) { "Нет ${scriptDex.absolutePath}" }
 
 		val optimizedDir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
-		val classLoader = DexClassLoader(
+		val dexLoader = DexClassLoader(
 			scriptDex.absolutePath,
 			optimizedDir.absolutePath,
 			null,
-			this::class.java.classLoader
+			context.classLoader
 		)
 
-		val clazz = classLoader.loadClass("ru.ravel.scripts.DateAdderScript")
-		val scriptObj = clazz.getDeclaredConstructor().newInstance()
-
-		val bindingClass = classLoader.loadClass("groovy.lang.Binding")
-		val binding = bindingClass.getConstructor(Map::class.java)
-			.newInstance(mapOf("input" to input))
-		clazz.getMethod("setBinding", bindingClass).invoke(scriptObj, binding)
-
-		val result = clazz.getMethod("run").invoke(scriptObj)
-		@Suppress("UNCHECKED_CAST")
-		return (result as? Map<String, Any?>)
-			?: error("Скрипт вернул не Map, а ${result?.javaClass?.name}")
-	}
-
-
-	@SuppressLint("SetWorldReadable")
-	private fun makeReadOnlyCopy(src: File, dst: File) {
-		src.copyTo(dst, overwrite = true)
-		dst.setReadable(true, false)
-		dst.setWritable(false, false)
-		dst.setExecutable(false, false)
-	}
-
-
-	private fun downloadToFile(urlStr: String, outFile: File) {
-		val tmp = File(outFile.parentFile, outFile.name + ".part")
-		var downloaded = if (tmp.exists()) tmp.length() else 0L
-		var attempt = 0
-		val maxAttempts = 5
-
-		while (attempt < maxAttempts) {
-			attempt++
-
-			val reqBuilder = Request.Builder()
-				.url(urlStr)
-				.header("Accept-Encoding", "identity")
-				.header("Connection", "close")
-
-			if (downloaded > 0L) {
-				reqBuilder.header("Range", "bytes=$downloaded-")
-			}
-
-			val call = httpClient.newCall(reqBuilder.build())
-			val resp = try {
-				call.execute()
-			} catch (e: IOException) {
-				if (attempt >= maxAttempts) throw e else continue
-			}
-
-			var completed = false
-			resp.use { r ->
-				if (!r.isSuccessful && r.code !in listOf(206, 200)) {
-					if (attempt >= maxAttempts) error("HTTP ${r.code}") else return@use
-				}
-
-				// Если сервер вернул полный файл при Range — начнём заново
-				if (r.code == 200 && downloaded > 0L) {
-					tmp.delete()
-					downloaded = 0L
-				}
-
-				val body = r.body ?: error("Empty body")
-				val expected = r.headers["Content-Length"]?.toLongOrNull()
-
-				body.byteStream().use { input ->
-					tmp.outputStream().use { output ->
-						val buf = ByteArray(256 * 1024)
-						var total = downloaded
-						while (true) {
-							val read = try {
-								input.read(buf)
-							} catch (e: javax.net.ssl.SSLProtocolException) {
-								break // оборвало соединение
-							}
-							if (read == -1) break
-							output.write(buf, 0, read)
-							total += read
-						}
-						// Проверяем, дочитали ли всё
-						if (expected == null || total - downloaded >= expected) {
-							downloaded = total
-							completed = true
-						} else {
-							downloaded = total
-						}
+		val prevCL = Thread.currentThread().contextClassLoader
+		Thread.currentThread().contextClassLoader = dexLoader
+		try {
+			// --- Читаем META-INF руками через ZipFile ---
+			val meta = mutableMapOf<String, String>()
+			ZipFile(scriptDex).use { zip ->
+				listOf(
+					"META-INF/dgminfo",
+					"META-INF/services/org.codehaus.groovy.vmplugin.VMPlugin",
+					"META-INF/services/org.codehaus.groovy.vmplugin.VMPluginFactory"
+				).forEach { path ->
+					val entry = zip.getEntry(path) ?: error("В $scriptDex нет $path")
+					zip.getInputStream(entry).bufferedReader().use { r ->
+						meta[path] = r.readText().trim()
 					}
 				}
 			}
 
-			if (completed) break
-			// иначе пойдём на новую попытку с Range
-		}
+			// --- GroovySystem и VMPlugin ---
+			dexLoader.loadClass("groovy.lang.GroovySystem")
 
-		val finalSize = tmp.length()
-		if (finalSize == 0L) error("Файл пустой")
-		if (outFile.exists()) outFile.delete()
-		if (!tmp.renameTo(outFile)) error("Не удалось переименовать временный файл")
+			val vmPluginFactoryCls = dexLoader.loadClass("org.codehaus.groovy.vmplugin.VMPluginFactory")
+			val java8PluginCls = dexLoader.loadClass("org.codehaus.groovy.vmplugin.v8.Java8")
+
+			val pluginInstance = java8PluginCls.getDeclaredConstructor().newInstance()
+			val pluginField = vmPluginFactoryCls.declaredFields.firstOrNull { f ->
+				java8PluginCls.isAssignableFrom(f.type)
+			} ?: throw IllegalStateException("Не найдено поле для VMPlugin в VMPluginFactory")
+
+			pluginField.isAccessible = true
+			pluginField.set(null, pluginInstance)
+
+
+			// --- шаг 2. Загружаем твой скрипт ---
+			val scriptCls = dexLoader.loadClass("ru.ravel.scripts.DateAdderScript")
+			val ctor = scriptCls.getDeclaredConstructor().apply { isAccessible = true }
+			val scriptObj = ctor.newInstance()
+
+			// --- шаг 3. Передаём binding ---
+			val bindingCls = dexLoader.loadClass("groovy.lang.Binding")
+			val binding = bindingCls.getConstructor(Map::class.java)
+				.newInstance(mapOf("input" to input))
+			scriptCls.getMethod("setBinding", bindingCls).invoke(scriptObj, binding)
+
+			// --- шаг 4. Вызываем run() ---
+			val result = scriptCls.getMethod("run").invoke(scriptObj)
+			@Suppress("UNCHECKED_CAST")
+			return (result as? Map<String, Any?>)
+				?: error("Скрипт вернул не Map, а ${result?.javaClass?.name}")
+		} finally {
+			Thread.currentThread().contextClassLoader = prevCL
+		}
 	}
 
-	private fun isRawDex(bytes: ByteArray): Boolean =
-		bytes.size > 8 && bytes[0] == 'd'.code.toByte() && bytes[1] == 'e'.code.toByte() &&
-				bytes[2] == 'x'.code.toByte() && bytes[3] == '\n'.code.toByte()
 
 	private fun wrapDexToJar(dexBytes: ByteArray, outJar: File) {
 		java.util.zip.ZipOutputStream(outJar.outputStream()).use { zos ->
@@ -226,7 +119,9 @@ class ScriptLoader(
 			zos.write(dexBytes)
 			zos.closeEntry()
 		}
+		outJar.outputStream().fd.sync()
 	}
+
 
 	private fun readDexDeclaredSize(ins: java.io.InputStream): Int {
 		val header = ByteArray(0x70) // заголовок DEX 112 байт
@@ -234,6 +129,7 @@ class ScriptLoader(
 		return java.nio.ByteBuffer.wrap(header, 0x20, 4)
 			.order(java.nio.ByteOrder.LITTLE_ENDIAN).int
 	}
+
 
 	private fun verifyDexJarStrong(file: File) {
 		ZipFile(file).use { z ->
@@ -253,32 +149,131 @@ class ScriptLoader(
 		val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
 		val outFile = File(dir, "DateAdderScript-dex.jar")
 
-		if (!outFile.exists()) {
-			val tmp = File(dir, "DateAdderScript-dex.part")
-			var attempt = 0
-			while (true) {
-				attempt++
-				try {
-					downloadToFile(url, tmp)
+		// Если файл уже есть и выглядит валидным — используем его
+		if (outFile.exists() && verifyDexJarLight(outFile)) {
+			hardenDexFile(outFile)
+			return@withContext outFile
+		}
 
-					val bytes = tmp.readBytes()
-					require(bytes.size > 5_000) { "Недокачанный файл: ${bytes.size} байт" }
+		// 1) Скачиваем полностью на диск в *.part (одна попытка)
+		val part = File(dir, "DateAdderScript-dex.jar.part").apply { delete() }
+		downloadFileOnce(url, part)
 
-					if (isRawDex(bytes)) {
-						wrapDexToJar(bytes, tmp)
+		// 2) Если это raw .dex — упакуем в .jar (локально, без сети)
+		if (isRawDex(part)) {
+			val jarTmp = File(dir, "DateAdderScript-dex.jar.make")
+			wrapDexToJar(part.readBytes(), jarTmp)
+			replaceAtomically(jarTmp, part) // теперь part — уже jar
+		}
+
+		// 3) Сильная проверка целостности classes.dex внутри jar
+		verifyDexJarStrong(part)
+
+		// 4) Атомарно переносим в итоговый файл и ужесточаем права
+		replaceAtomically(part, outFile)
+		hardenDexFile(outFile)
+		outFile
+	}
+
+
+	private fun downloadFileOnce(url: String, dest: File, maxAttempts: Int = 99) {
+		if (dest.exists()) dest.delete()
+
+		repeat(maxAttempts) { attempt ->
+			try {
+				val req = Request.Builder()
+					.url(url)
+					.header("Accept-Encoding", "identity")
+					.header("Connection", "close")
+					.build()
+
+				httpClient.newCall(req).execute().use { resp ->
+					require(resp.isSuccessful) { "HTTP ${resp.code}" }
+					val body = resp.body ?: error("Empty body")
+					val expected = resp.header("Content-Length")?.toLongOrNull()
+
+					dest.sink().buffer().use { sink ->
+						val source = body.source()
+						var total = 0L
+						while (true) {
+							val read = source.read(sink.buffer, 256 * 1024L)
+							if (read == -1L) break
+							total += read
+							sink.emitCompleteSegments()
+						}
+						sink.flush()
+
+						if (expected != null && total != expected) {
+							error("Размер не совпал: $total / $expected")
+						}
+						if (total == 0L) error("Файл пустой")
 					}
-					verifyDexJarStrong(tmp)
-
-					tmp.copyTo(outFile, overwrite = true)
-					tmp.delete()
-					break
-				} catch (e: Throwable) {
-					tmp.delete()
-					if (attempt >= 3) throw e
 				}
+				// если дошли сюда — успех
+				return
+			} catch (e: javax.net.ssl.SSLProtocolException) {
+				dest.delete()
+				if (attempt == maxAttempts - 1) {
+					throw IOException("Не удалось скачать за $maxAttempts попыток", e)
+				}
+				// небольшой бэк-офф, чтобы сервер успокоился
+				Thread.sleep(1000)
 			}
 		}
-		outFile
+	}
+
+
+	/**
+	 * Атомарная замена файла (renameTo как операция перемещения в пределах тома).
+	 */
+	private fun replaceAtomically(src: File, dst: File) {
+		if (dst.exists()) dst.delete()
+		val ok = src.renameTo(dst)
+		require(ok) { "Не удалось переименовать ${src.name} -> ${dst.name}" }
+	}
+
+
+	/**
+	 * Признак «сырых» DEX-байт (не jar).
+	 */
+	private fun isRawDex(file: File): Boolean {
+		if (!file.exists() || file.length() < 8) return false
+		val header = file.inputStream().use { ins ->
+			ByteArray(8).also { ins.read(it) }
+		}
+		return (header[0] == 'd'.code.toByte()
+				&& header[1] == 'e'.code.toByte()
+				&& header[2] == 'x'.code.toByte()
+				&& header[3] == '\n'.code.toByte())
+	}
+
+
+	private fun verifyDexJarLight(file: File): Boolean {
+		return try {
+			ZipFile(file).use { zip ->
+				val entries = zip.entries().toList().map { it.name }
+				val hasDex = entries.any { it.endsWith("classes.dex") }
+				if (!hasDex) {
+					Log.e("ScriptLoader", "В jar нет classes.dex, есть: $entries")
+				}
+				hasDex
+			}
+		} catch (e: Exception) {
+			Log.e("ScriptLoader", "Не удалось открыть как zip: ${e.message}")
+			false
+		}
+	}
+
+
+	@SuppressLint("SetWorldReadable")
+	private fun hardenDexFile(file: File) {
+		try {
+			Os.chmod(file.absolutePath, OsConstants.S_IRUSR or OsConstants.S_IRGRP or OsConstants.S_IROTH)
+		} catch (_: Throwable) {
+			file.setReadable(true, false)
+			file.setWritable(false, false)
+			// file.setExecutable(false, false)
+		}
 	}
 
 }

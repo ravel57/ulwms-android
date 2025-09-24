@@ -53,6 +53,7 @@ dependencies {
 	androidTestImplementation(libs.androidx.junit)
 	androidTestImplementation(libs.androidx.espresso.core)
 
-	implementation(libs.okhttp)
 	implementation(libs.okhttp.v4120)
+	implementation(libs.okio)
+	implementation(libs.okio.v391)
 }

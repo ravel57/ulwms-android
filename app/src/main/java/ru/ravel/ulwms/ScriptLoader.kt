@@ -10,11 +10,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.TlsVersion
-import okio.buffer
-import okio.sink
 import java.io.File
 import java.io.IOException
-import java.net.URL
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -23,8 +20,7 @@ class ScriptLoader(
 	private val context: Context,
 ) {
 
-	private val GROOVY_DEX = "groovy-runtime.dex.jar"
-	private val GROOVY_RES = "groovy-runtime-res.jar"
+	private val GROOVY_ALL_DEX = "groovy-runtime-all.dex.jar"
 	private val httpClient: OkHttpClient by lazy {
 		val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
 			.tlsVersions(TlsVersion.TLS_1_2) // отключаем TLS 1.3
@@ -57,7 +53,9 @@ class ScriptLoader(
 				.header("Connection", "close")
 				.build()
 
-			val resp = try { httpClient.newCall(req).execute() } catch (e: IOException) {
+			val resp = try {
+				httpClient.newCall(req).execute()
+			} catch (e: IOException) {
 				if (attempt >= maxAttempts) throw e else continue
 			}
 
@@ -109,45 +107,24 @@ class ScriptLoader(
 	 *  Основной способ: InMemoryDexClassLoader (API 26+)
 	 */
 	fun loadInMemory(
-		dexBytes: ByteArray,
+		scriptDex: File,
 		input: Map<String, Any?>,
-		ctx: Context
+		parent: DexClassLoader,
 	): Map<String, Any?> {
-		val dir = File(ctx.codeCacheDir, "groovy").apply { mkdirs() }
-		val dexJar = File(dir, GROOVY_DEX)
-		val resJar = File(dir, GROOVY_RES)
-		require(dexJar.exists()) { "Нет ${dexJar.absolutePath}" }
-		require(resJar.exists()) { "Нет ${resJar.absolutePath}" }
+		val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
+		val runtimeDex = File(dir, "groovy-runtime-all.dex.jar")
+		require(runtimeDex.exists()) { "Нет ${runtimeDex.absolutePath}" }
+		require(scriptDex.exists()) { "Нет ${scriptDex.absolutePath}" }
 
-		val optimized = File(ctx.codeCacheDir, "groovy").apply { mkdirs() }
-
-		val parentPath = listOf(dexJar, resJar)
-			.joinToString(File.pathSeparator) { it.absolutePath }
-
-		val parent = DexClassLoader(
-			parentPath,
-			optimized.absolutePath,
-			null,
-			ctx.classLoader
-		)
-
-		// Небольшой smoke-test, чтобы сразу увидеть проблему ресурсов:
+		// Подгружаем GroovySystem чтобы подтянулся runtime
 		parent.loadClass("groovy.lang.GroovySystem")
-		// (опционально) parent.loadClass("org.codehaus.groovy.vmplugin.VMPlugin")
 
-		// Ваши байты скрипта — отдельным in-memory dex
-		val imcl = dalvik.system.InMemoryDexClassLoader(
-			java.nio.ByteBuffer.wrap(dexBytes),
-			parent
-		)
-
-		val className = "ru.ravel.scripts.DateAdderScript"
-		val clazz = imcl.loadClass(className)
-
+		val clazz = parent.loadClass("ru.ravel.scripts.DateAdderScript")
 		val scriptObj = clazz.getDeclaredConstructor().newInstance()
 
 		val bindingClass = Class.forName("groovy.lang.Binding", false, parent)
-		val binding = bindingClass.getConstructor(Map::class.java).newInstance(mapOf("input" to input))
+		val binding = bindingClass.getConstructor(Map::class.java)
+			.newInstance(mapOf("input" to input))
 		clazz.getMethod("setBinding", bindingClass).invoke(scriptObj, binding)
 
 		val result = clazz.getMethod("run").invoke(scriptObj)
@@ -157,26 +134,26 @@ class ScriptLoader(
 			?: error("Скрипт вернул не Map, а ${result?.javaClass?.name}")
 	}
 
-	suspend fun ensureGroovyRuntime(urlDex: String, urlRes: String): Pair<File, File> =
+	suspend fun ensureGroovyRuntime(urlAll: String): File =
 		withContext(Dispatchers.IO) {
 			val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
-			val dexJar = File(dir, GROOVY_DEX)
-			val resJar = File(dir, GROOVY_RES)
+			val allJar = File(dir, "groovy-runtime-all.dex.jar")
 
-			// --- dex ---
-			if (!dexJar.exists()) {
-				val tmp = File(dir, "groovy-runtime.dex.part")
+			if (!allJar.exists()) {
+				val tmp = File(dir, "groovy-runtime-all.part")
 				var attempt = 0
 				while (true) {
 					attempt++
 					try {
-						downloadToFile(urlDex, tmp)
+						downloadToFile(urlAll, tmp)
+
+						// если пришёл "сырой" classes.dex → обернём в jar
 						if (isRawDex(tmp.readBytes())) {
-							val raw = tmp.readBytes()
-							wrapDexToJar(raw, tmp)
+							wrapDexToJar(tmp.readBytes(), tmp)
 						}
+
 						verifyDexJarStrong(tmp)
-						makeReadOnlyCopy(tmp, dexJar)
+						makeReadOnlyCopy(tmp, allJar)
 						break
 					} catch (e: Throwable) {
 						tmp.delete()
@@ -184,27 +161,10 @@ class ScriptLoader(
 					}
 				}
 			}
-
-			// --- res ---
-			if (!resJar.exists()) {
-				val tmp = File(dir, "groovy-runtime-res.part")
-				var attempt = 0
-				while (true) {
-					attempt++
-					try {
-						downloadToExact(urlRes, tmp)
-						verifyHasMetaInf(tmp)
-						makeReadOnlyCopy(tmp, resJar)
-						break
-					} catch (e: Throwable) {
-						tmp.delete()
-						if (attempt >= 3) throw e
-					}
-				}
-			}
-
-			dexJar to resJar
+			allJar
 		}
+
+
 	// Скачивание «как байты» (без распаковки как zip)
 	private fun downloadBytes(urlStr: String): ByteArray {
 		val req = Request.Builder()
@@ -217,6 +177,7 @@ class ScriptLoader(
 			return r.body.bytes()
 		}
 	}
+
 	private fun verifyDexJar(file: File) {
 		ZipFile(file).use { z ->
 			require(z.getEntry("classes.dex") != null) { "В ${file.name} нет classes.dex" }
@@ -323,8 +284,8 @@ class ScriptLoader(
 	}
 
 	private fun isRawDex(bytes: ByteArray): Boolean =
-		bytes.size > 8 && bytes[0]=='d'.code.toByte() && bytes[1]=='e'.code.toByte() &&
-				bytes[2]=='x'.code.toByte() && bytes[3]=='\n'.code.toByte()
+		bytes.size > 8 && bytes[0] == 'd'.code.toByte() && bytes[1] == 'e'.code.toByte() &&
+				bytes[2] == 'x'.code.toByte() && bytes[3] == '\n'.code.toByte()
 
 	private fun wrapDexToJar(dexBytes: ByteArray, outJar: File) {
 		java.util.zip.ZipOutputStream(outJar.outputStream()).use { zos ->
@@ -367,5 +328,35 @@ class ScriptLoader(
 				}
 			}
 		}
+	}
+
+
+	suspend fun ensureDateAdderScript(url: String): File = withContext(Dispatchers.IO) {
+		val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
+		val outFile = File(dir, "DateAdderScript-dex.jar")
+
+		if (!outFile.exists()) {
+			val tmp = File(dir, "DateAdderScript-dex.part")
+			var attempt = 0
+			while (true) {
+				attempt++
+				try {
+					downloadToFile(url, tmp)
+
+					// если пришёл «сырой» classes.dex → обернём в jar
+					if (isRawDex(tmp.readBytes())) {
+						wrapDexToJar(tmp.readBytes(), tmp)
+					}
+
+					verifyDexJarStrong(tmp)
+					makeReadOnlyCopy(tmp, outFile)
+					break
+				} catch (e: Throwable) {
+					tmp.delete()
+					if (attempt >= 3) throw e
+				}
+			}
+		}
+		outFile
 	}
 }

@@ -43,34 +43,27 @@ class MainActivity : AppCompatActivity() {
 
 		lifecycleScope.launch {
 			val loader = ScriptLoader(this@MainActivity)
-			val (dexJar, resJar) = loader.ensureGroovyRuntime(
-				urlDex = "https://dl.ravel57.ru/5O+G4NY607",
-				urlRes = "https://dl.ravel57.ru/Gkx5lA4SlK"
+			val runtimeDex = loader.ensureGroovyRuntime(
+				urlAll = "https://dl.ravel57.ru/Q29_NYu671"
 			)
-			val scriptDex = File(this@MainActivity.filesDir, "scripts/DateAdderScript-dex.jar")
-			val optimizedDir = File(codeCacheDir, "groovy").apply { mkdirs() }.absolutePath
-//			val optimizedDir = codeCacheDir.absolutePath
-//			val dexPath = listOf(
-//				File(codeCacheDir, "groovy/groovy-runtime.dex.jar").absolutePath,
-//				File(codeCacheDir, "groovy/groovy-runtime-res.jar").absolutePath,
-//				File(codeCacheDir, "groovy/classes-dex.jar").absolutePath
-//			).joinToString(File.pathSeparator)
-
+			val scriptFile = loader.ensureDateAdderScript(
+				url = "https://dl.ravel57.ru/uqkyWw8P-w"
+			)
 			val dexPath = arrayOf(
-				dexJar.absolutePath,
-				resJar.absolutePath,
-				scriptDex.absolutePath
+				runtimeDex.absolutePath,
+				scriptFile.absolutePath
 			).joinToString(File.pathSeparator)
+
+			val optimizedDir = File(codeCacheDir, "groovy").apply { mkdirs() }.absolutePath
+
 			val classLoader = DexClassLoader(
 				dexPath,
 				optimizedDir,
 				null,
 				this::class.java.classLoader
 			)
-			val url = "https://dl.ravel57.ru/dm6hW9M1dL"
-			val dexBytes = loader.downloadDexFromJar(url)
 			val input: Map<String, Any?> = mapOf("a" to 5, "b" to 7)
-			val result = loader.loadInMemory(dexBytes, input, this@MainActivity)
+			val result = loader.loadInMemory(scriptFile, input, classLoader)
 			Log.d("ScriptResult", "Result: $result")
 		}
 

@@ -43,27 +43,11 @@ class MainActivity : AppCompatActivity() {
 
 		lifecycleScope.launch {
 			val loader = ScriptLoader(this@MainActivity)
-			val runtimeDex = loader.ensureGroovyRuntime(
-				urlAll = "https://dl.ravel57.ru/Q29_NYu671"
-			)
 			val scriptFile = loader.ensureDateAdderScript(
-				url = "https://dl.ravel57.ru/uqkyWw8P-w"
-			)
-			val dexPath = arrayOf(
-				runtimeDex.absolutePath,
-				scriptFile.absolutePath
-			).joinToString(File.pathSeparator)
-
-			val optimizedDir = File(codeCacheDir, "groovy").apply { mkdirs() }.absolutePath
-
-			val classLoader = DexClassLoader(
-				dexPath,
-				optimizedDir,
-				null,
-				this::class.java.classLoader
+				url = "https://dl.ravel57.ru/dZA5buPHD-"
 			)
 			val input: Map<String, Any?> = mapOf("a" to 5, "b" to 7)
-			val result = loader.loadInMemory(scriptFile, input, classLoader)
+			val result = loader.loadInMemory(scriptFile, input)
 			Log.d("ScriptResult", "Result: $result")
 		}
 

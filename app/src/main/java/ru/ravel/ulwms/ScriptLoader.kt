@@ -106,98 +106,31 @@ class ScriptLoader(
 	/**
 	 *  Основной способ: InMemoryDexClassLoader (API 26+)
 	 */
-	fun loadInMemory(
-		scriptDex: File,
-		input: Map<String, Any?>,
-		parent: DexClassLoader,
-	): Map<String, Any?> {
-		val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
-		val runtimeDex = File(dir, "groovy-runtime-all.dex.jar")
-		require(runtimeDex.exists()) { "Нет ${runtimeDex.absolutePath}" }
+	fun loadInMemory(scriptDex: File, input: Map<String, Any?>): Map<String, Any?> {
 		require(scriptDex.exists()) { "Нет ${scriptDex.absolutePath}" }
 
-		// Подгружаем GroovySystem чтобы подтянулся runtime
-		parent.loadClass("groovy.lang.GroovySystem")
+		val optimizedDir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
+		val classLoader = DexClassLoader(
+			scriptDex.absolutePath,
+			optimizedDir.absolutePath,
+			null,
+			this::class.java.classLoader
+		)
 
-		val clazz = parent.loadClass("ru.ravel.scripts.DateAdderScript")
+		val clazz = classLoader.loadClass("ru.ravel.scripts.DateAdderScript")
 		val scriptObj = clazz.getDeclaredConstructor().newInstance()
 
-		val bindingClass = Class.forName("groovy.lang.Binding", false, parent)
+		val bindingClass = classLoader.loadClass("groovy.lang.Binding")
 		val binding = bindingClass.getConstructor(Map::class.java)
 			.newInstance(mapOf("input" to input))
 		clazz.getMethod("setBinding", bindingClass).invoke(scriptObj, binding)
 
 		val result = clazz.getMethod("run").invoke(scriptObj)
-
 		@Suppress("UNCHECKED_CAST")
 		return (result as? Map<String, Any?>)
 			?: error("Скрипт вернул не Map, а ${result?.javaClass?.name}")
 	}
 
-	suspend fun ensureGroovyRuntime(urlAll: String): File =
-		withContext(Dispatchers.IO) {
-			val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
-			val allJar = File(dir, "groovy-runtime-all.dex.jar")
-
-			if (!allJar.exists()) {
-				val tmp = File(dir, "groovy-runtime-all.part")
-				var attempt = 0
-				while (true) {
-					attempt++
-					try {
-						downloadToFile(urlAll, tmp)
-
-						// если пришёл "сырой" classes.dex → обернём в jar
-						if (isRawDex(tmp.readBytes())) {
-							wrapDexToJar(tmp.readBytes(), tmp)
-						}
-
-						verifyDexJarStrong(tmp)
-						makeReadOnlyCopy(tmp, allJar)
-						break
-					} catch (e: Throwable) {
-						tmp.delete()
-						if (attempt >= 3) throw e
-					}
-				}
-			}
-			allJar
-		}
-
-
-	// Скачивание «как байты» (без распаковки как zip)
-	private fun downloadBytes(urlStr: String): ByteArray {
-		val req = Request.Builder()
-			.url(urlStr)
-			.header("Accept-Encoding", "identity")
-			.header("Connection", "close")
-			.build()
-		httpClient.newCall(req).execute().use { r ->
-			if (!r.isSuccessful) error("HTTP ${r.code}")
-			return r.body.bytes()
-		}
-	}
-
-	private fun verifyDexJar(file: File) {
-		ZipFile(file).use { z ->
-			require(z.getEntry("classes.dex") != null) { "В ${file.name} нет classes.dex" }
-		}
-	}
-
-	private fun verifyHasMetaInf(file: File) {
-		ZipFile(file).use { z ->
-			val hasServices = z.getEntry("META-INF/services/org.codehaus.groovy.vmplugin.VMPlugin") != null ||
-					z.getEntry("META-INF/services/org.codehaus.groovy.vmplugin.VMPluginFactory") != null
-			require(hasServices) { "В ${file.name} нет META-INF/services для VMPlugin" }
-		}
-	}
-
-	@SuppressLint("SetWorldReadable")
-	private fun makeReadOnly(file: File) {
-		file.setReadable(true, false)
-		file.setWritable(false, false)
-		file.setExecutable(false, false)
-	}
 
 	@SuppressLint("SetWorldReadable")
 	private fun makeReadOnlyCopy(src: File, dst: File) {
@@ -302,21 +235,6 @@ class ScriptLoader(
 			.order(java.nio.ByteOrder.LITTLE_ENDIAN).int
 	}
 
-	private fun downloadToExact(url: String, out: File) {
-		val req = okhttp3.Request.Builder()
-			.url(url)
-			.header("Accept-Encoding", "identity") // без gzip
-			.build()
-		httpClient.newCall(req).execute().use { r ->
-			if (!r.isSuccessful) error("HTTP ${r.code} при загрузке $url")
-			val expected = r.body?.contentLength() ?: -1
-			out.outputStream().use { dst -> r.body!!.byteStream().copyTo(dst) }
-			if (expected > 0 && out.length() != expected) {
-				error("Получено ${out.length()} из $expected байт ($url)")
-			}
-		}
-	}
-
 	private fun verifyDexJarStrong(file: File) {
 		ZipFile(file).use { z ->
 			val e = z.getEntry("classes.dex") ?: error("В ${file.name} нет classes.dex")
@@ -343,13 +261,16 @@ class ScriptLoader(
 				try {
 					downloadToFile(url, tmp)
 
-					// если пришёл «сырой» classes.dex → обернём в jar
-					if (isRawDex(tmp.readBytes())) {
-						wrapDexToJar(tmp.readBytes(), tmp)
-					}
+					val bytes = tmp.readBytes()
+					require(bytes.size > 5_000) { "Недокачанный файл: ${bytes.size} байт" }
 
+					if (isRawDex(bytes)) {
+						wrapDexToJar(bytes, tmp)
+					}
 					verifyDexJarStrong(tmp)
-					makeReadOnlyCopy(tmp, outFile)
+
+					tmp.copyTo(outFile, overwrite = true)
+					tmp.delete()
 					break
 				} catch (e: Throwable) {
 					tmp.delete()
@@ -359,4 +280,5 @@ class ScriptLoader(
 		}
 		outFile
 	}
+
 }

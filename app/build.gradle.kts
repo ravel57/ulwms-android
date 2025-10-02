@@ -9,7 +9,7 @@ android {
 
 	defaultConfig {
 		applicationId = "ru.ravel.ulwms"
-		minSdk = 31
+		minSdk = 26
 		targetSdk = 36
 		versionCode = 1
 		versionName = "1.0"
@@ -33,12 +33,22 @@ android {
 //		coreLibraryDesugaringEnabled = true
 	}
 
-	kotlinOptions {
-		jvmTarget = "17"
+	kotlin {
+		compilerOptions {
+			jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+		}
 	}
 
 	buildFeatures {
 		viewBinding = true
+	}
+
+	packaging {
+		resources {
+			excludes += "kotlin/internal/internal.kotlin_builtins"
+			excludes += "META-INF/*.kotlin_module"
+			excludes += "META-INF/*.version"
+		}
 	}
 }
 
@@ -53,7 +63,14 @@ dependencies {
 	androidTestImplementation(libs.androidx.junit)
 	androidTestImplementation(libs.androidx.espresso.core)
 
-	implementation(libs.okhttp.v4120)
+	implementation(libs.okhttp)
 	implementation(libs.okio)
-	implementation(libs.okio.v391)
+	implementation(libs.retrofit)
+	implementation(libs.converter.scalars)
+	implementation(libs.rxjava)
+	implementation(libs.adapter.rxjava3)
+	implementation(libs.rxandroid)
+	implementation(libs.converter.gson)
+
+	implementation(files("libs/android-release.aar"))
 }

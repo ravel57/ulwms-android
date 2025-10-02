@@ -1,4 +1,4 @@
-package ru.ravel.ulwms
+package ru.ravel.ulwms.service
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -6,39 +6,36 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import dalvik.system.DexClassLoader
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import io.reactivex.rxjava3.core.Single
 import okhttp3.CipherSuite
 import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.Request
 import okhttp3.TlsVersion
+import java.io.DataInputStream
 import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
-import java.nio.channels.FileChannel
-import java.util.concurrent.TimeUnit
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
-import java.util.zip.ZipInputStream
-import okio.sink
-import okio.buffer
-import okio.source
+import java.util.zip.ZipOutputStream
+import javax.net.ssl.SSLProtocolException
 
 class ScriptLoader(
 	private val context: Context,
 ) {
-	val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+	val spec = ConnectionSpec.Builder(ConnectionSpec.Companion.MODERN_TLS)
 		.tlsVersions(TlsVersion.TLS_1_2)
 		.cipherSuites(
-			CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			CipherSuite.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			CipherSuite.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			CipherSuite.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+			CipherSuite.Companion.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			CipherSuite.Companion.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			CipherSuite.Companion.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			CipherSuite.Companion.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
 		)
 		.build()
 	val httpClient = OkHttpClient.Builder()
-		.connectionSpecs(listOf(spec, ConnectionSpec.CLEARTEXT))
+		.connectionSpecs(listOf(spec, ConnectionSpec.Companion.CLEARTEXT))
 		.protocols(listOf(Protocol.HTTP_1_1))
 		.retryOnConnectionFailure(false)
 		.build()
@@ -48,7 +45,7 @@ class ScriptLoader(
 	 *  Основной способ: InMemoryDexClassLoader (API 26+)
 	 */
 	@SuppressLint("DiscouragedPrivateApi")
-	fun loadInMemory(scriptDex: File, input: Map<String, Any?>): Map<String, Any?>? {
+	fun loadInMemory(scriptDex: File, input: Map<String, Any?>?, className: String): Map<String, Any?>? {
 		require(scriptDex.exists()) { "Нет ${scriptDex.absolutePath}" }
 
 		val optimizedDir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
@@ -62,7 +59,7 @@ class ScriptLoader(
 		val prevCL = Thread.currentThread().contextClassLoader
 		Thread.currentThread().contextClassLoader = dexLoader
 		try {
-			val scriptCls = dexLoader.loadClass("ru.ravel.scripts.DateAdderScript")
+			val scriptCls = dexLoader.loadClass(className)
 			val ctor = scriptCls.getDeclaredConstructor().apply { isAccessible = true }
 			val scriptObj = ctor.newInstance()
 
@@ -76,8 +73,8 @@ class ScriptLoader(
 
 
 	private fun wrapDexToJar(dexBytes: ByteArray, outJar: File) {
-		java.util.zip.ZipOutputStream(outJar.outputStream()).use { zos ->
-			zos.putNextEntry(java.util.zip.ZipEntry("classes.dex"))
+		ZipOutputStream(outJar.outputStream()).use { zos ->
+			zos.putNextEntry(ZipEntry("classes.dex"))
 			zos.write(dexBytes)
 			zos.closeEntry()
 		}
@@ -85,11 +82,11 @@ class ScriptLoader(
 	}
 
 
-	private fun readDexDeclaredSize(ins: java.io.InputStream): Int {
+	private fun readDexDeclaredSize(ins: InputStream): Int {
 		val header = ByteArray(0x70) // заголовок DEX 112 байт
-		java.io.DataInputStream(ins).readFully(header)
-		return java.nio.ByteBuffer.wrap(header, 0x20, 4)
-			.order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+		DataInputStream(ins).readFully(header)
+		return ByteBuffer.wrap(header, 0x20, 4)
+			.order(ByteOrder.LITTLE_ENDIAN).int
 	}
 
 
@@ -107,81 +104,62 @@ class ScriptLoader(
 	}
 
 
-	suspend fun ensureDateAdderScript(url: String): File = withContext(Dispatchers.IO) {
+	fun ensureDateAdderScript(url: String): Single<File> {
 		val dir = File(context.codeCacheDir, "groovy").apply { mkdirs() }
 		val outFile = File(dir, "DateAdderScript-dex.jar")
 
-		// Если файл уже есть и выглядит валидным — используем его
-		if (outFile.exists() && verifyDexJarLight(outFile)) {
-			hardenDexFile(outFile)
-			return@withContext outFile
+		return if (outFile.exists() && verifyDexJarLight(outFile)) {
+			Single.just(outFile.also { hardenDexFile(it) })
+		} else {
+			val part = File(dir, "DateAdderScript-dex.jar.part").apply { delete() }
+
+			downloadFileOnce(url, part).map { file ->
+				if (isRawDex(file)) {
+					val jarTmp = File(dir, "DateAdderScript-dex.jar.make")
+					wrapDexToJar(file.readBytes(), jarTmp)
+					replaceAtomically(jarTmp, file)
+				}
+
+				verifyDexJarStrong(file)
+				replaceAtomically(file, outFile)
+				hardenDexFile(outFile)
+				outFile
+			}
 		}
-
-		// 1) Скачиваем полностью на диск в *.part (одна попытка)
-		val part = File(dir, "DateAdderScript-dex.jar.part").apply { delete() }
-		downloadFileOnce(url, part)
-
-		// 2) Если это raw .dex — упакуем в .jar (локально, без сети)
-		if (isRawDex(part)) {
-			val jarTmp = File(dir, "DateAdderScript-dex.jar.make")
-			wrapDexToJar(part.readBytes(), jarTmp)
-			replaceAtomically(jarTmp, part) // теперь part — уже jar
-		}
-
-		// 3) Сильная проверка целостности classes.dex внутри jar
-		verifyDexJarStrong(part)
-
-		// 4) Атомарно переносим в итоговый файл и ужесточаем права
-		replaceAtomically(part, outFile)
-		hardenDexFile(outFile)
-		outFile
 	}
 
 
-	private fun downloadFileOnce(url: String, dest: File, maxAttempts: Int = 99) {
-		if (dest.exists()) dest.delete()
-
-		repeat(maxAttempts) { attempt ->
-			try {
-				val req = Request.Builder()
-					.url(url)
-					.header("Accept-Encoding", "identity")
-					.header("Connection", "close")
-					.build()
-
-				httpClient.newCall(req).execute().use { resp ->
-					require(resp.isSuccessful) { "HTTP ${resp.code}" }
-					val body = resp.body ?: error("Empty body")
-					val expected = resp.header("Content-Length")?.toLongOrNull()
-
-					dest.sink().buffer().use { sink ->
-						val source = body.source()
-						var total = 0L
-						while (true) {
-							val read = source.read(sink.buffer, 256 * 1024L)
-							if (read == -1L) break
-							total += read
-							sink.emitCompleteSegments()
+	private fun downloadFileOnce(url: String, dest: File, maxAttempts: Int = 99): Single<File> {
+//		if (dest.exists()) dest.delete()
+		return Single
+			.defer {
+				RetrofitProvider.api.downloadFile(url)
+					.map { body ->
+						body.use {
+							val expected = it.contentLength().takeIf { len -> len > 0 }
+							dest.outputStream().use { out ->
+								it.byteStream().copyTo(out)
+							}
+							if (expected != null && dest.length() != expected) {
+								error("Размер не совпал: ${dest.length()} / $expected")
+							}
+							dest
 						}
-						sink.flush()
-
-						if (expected != null && total != expected) {
-							error("Размер не совпал: $total / $expected")
-						}
-						if (total == 0L) error("Файл пустой")
+					}
+			}
+			.retryWhen { errors ->
+				errors.zipWith(
+					io.reactivex.rxjava3.core.Flowable.range(1, maxAttempts)
+				) { e, attempt ->
+					if (e is SSLProtocolException && attempt < maxAttempts) {
+						RetrofitProvider.resetClient()
+						Thread.sleep(1000)
+						attempt
+					} else {
+						throw e
 					}
 				}
-				// если дошли сюда — успех
-				return
-			} catch (e: javax.net.ssl.SSLProtocolException) {
-				dest.delete()
-				if (attempt == maxAttempts - 1) {
-					throw IOException("Не удалось скачать за $maxAttempts попыток", e)
-				}
-				// небольшой бэк-офф, чтобы сервер успокоился
-				Thread.sleep(1000)
 			}
-		}
 	}
 
 

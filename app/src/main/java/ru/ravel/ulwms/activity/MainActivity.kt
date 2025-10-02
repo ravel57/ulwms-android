@@ -1,28 +1,30 @@
 package ru.ravel.ulwms.activity
 
+import android.annotation.SuppressLint
+import android.content.ClipboardManager
 import android.os.Bundle
-import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.navigateUp
 import androidx.navigation.ui.setupActionBarWithNavController
-import com.google.android.material.snackbar.Snackbar
-import dalvik.system.DexClassLoader
-import kotlinx.coroutines.launch
+import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import ru.ravel.ulwms.R
-import ru.ravel.ulwms.ScriptLoader
 import ru.ravel.ulwms.databinding.ActivityMainBinding
-import java.io.File
+import ru.ravel.ulwms.dto.SharedViewModel
+import ru.ravel.ulwms.service.HttpClient
+
 
 class MainActivity : AppCompatActivity() {
 
 	private lateinit var appBarConfiguration: AppBarConfiguration
 	private lateinit var binding: ActivityMainBinding
+	val viewModel: SharedViewModel by viewModels()
 
+	@SuppressLint("CheckResult")
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
 
@@ -35,17 +37,16 @@ class MainActivity : AppCompatActivity() {
 		appBarConfiguration = AppBarConfiguration(navController.graph)
 		setupActionBarWithNavController(navController, appBarConfiguration)
 
-		binding.fab.setOnClickListener { view ->
-			Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-				.setAction("Action", null)
-				.setAnchorView(R.id.fab).show()
-		}
+		binding.fab.setOnClickListener {
+			val host = getString(R.string.api_url)
+			val clipboard = (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).primaryClip
 
-		lifecycleScope.launch {
-			val loader = ScriptLoader(this@MainActivity)
-			val dexFile = loader.ensureDateAdderScript("https://dl.ravel57.ru/y2Adq6PeCx")
-			val result = loader.loadInMemory(dexFile, mapOf("a" to 5, "b" to 7))
-			Log.d("ScriptResult", "Result: $result")
+			HttpClient().sendScan(host, clipboard)
+				.observeOn(AndroidSchedulers.mainThread())
+				.subscribe(
+					{ response -> viewModel.instruction.value = response.message },
+					{ e -> e.printStackTrace() }
+				)
 		}
 
 	}

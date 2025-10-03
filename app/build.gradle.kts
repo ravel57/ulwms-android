@@ -28,14 +28,14 @@ android {
 	}
 
 	compileOptions {
-		sourceCompatibility = JavaVersion.VERSION_17
-		targetCompatibility = JavaVersion.VERSION_17
+		sourceCompatibility = JavaVersion.VERSION_1_8
+		targetCompatibility = JavaVersion.VERSION_1_8
 //		coreLibraryDesugaringEnabled = true
 	}
 
 	kotlin {
 		compilerOptions {
-			jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+			jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
 		}
 	}
 
@@ -53,16 +53,27 @@ android {
 }
 
 dependencies {
+//	core
 	implementation(libs.androidx.core.ktx)
 	implementation(libs.androidx.appcompat)
-	implementation(libs.material)
 	implementation(libs.androidx.constraintlayout)
 	implementation(libs.androidx.navigation.fragment.ktx)
 	implementation(libs.androidx.navigation.ui.ktx)
-	testImplementation(libs.junit)
-	androidTestImplementation(libs.androidx.junit)
-	androidTestImplementation(libs.androidx.espresso.core)
 
+	// Kotlin
+	implementation(libs.jetbrains.kotlin.stdlib)
+
+	// Jetpack Compose
+	implementation(libs.androidx.activity.compose)
+	implementation(libs.androidx.ui)
+	implementation(libs.ui.tooling.preview)
+	implementation(libs.material)
+//	implementation(libs.androidx.material3)
+
+//	Коррутины для фоновой загрузки JSON с сервера (опционально)
+	implementation(libs.kotlinx.coroutines.android)
+
+//	lcpe
 	implementation(libs.okhttp)
 	implementation(libs.okio)
 	implementation(libs.retrofit)
@@ -71,6 +82,19 @@ dependencies {
 	implementation(libs.adapter.rxjava3)
 	implementation(libs.rxandroid)
 	implementation(libs.converter.gson)
+	implementation(libs.jackson.databind)
+	implementation(libs.jackson.module.kotlin)
+	implementation(libs.snakeyaml)
 
+//	lib
 	implementation(files("libs/android-release.aar"))
+
+//	Для отладки UI
+	debugImplementation(libs.androidx.ui.tooling)
+	debugImplementation(libs.androidx.ui.test.manifest)
+
+//	tests
+	testImplementation(libs.junit)
+	androidTestImplementation(libs.androidx.junit)
+	androidTestImplementation(libs.androidx.espresso.core)
 }

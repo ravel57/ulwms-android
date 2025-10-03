@@ -1,0 +1,27 @@
+{
+  "type": "LinearLayout",
+  "orientation": "vertical",
+  "padding": 16,
+  "children": [
+    {
+      "type": "TextView",
+      "text": "Форма",
+      "textSizeSp": 18,
+      "margin": {
+        "bottom": 12
+      }
+    },
+    {
+      "type": "TextView",
+      "text": "Здесь могла бы быть форма :)"
+    },
+    {
+      "type": "Button",
+      "text": "Назад на главный",
+      "action": "backToMain",
+      "margin": {
+        "top": 16
+      }
+    }
+  ]
+}

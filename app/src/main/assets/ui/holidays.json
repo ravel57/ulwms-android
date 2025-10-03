@@ -1,0 +1,33 @@
+{
+  "type": "ScrollView",
+  "width": "match",
+  "height": "match",
+  "children": [
+    {
+      "type": "LinearLayout",
+      "orientation": "vertical",
+      "padding": 16,
+      "children": [
+        {
+          "type": "TextView",
+          "id": "holidaysTitle",
+          "text": "",
+          "textSizeSp": 20,
+          "margin": {
+            "bottom": 12
+          }
+        },
+        {
+          "type": "Button",
+          "text": "Обновить",
+          "action": "refreshHolidays",
+          "width": "match",
+          "height": 48,
+          "margin": {
+            "top": 8
+          }
+        }
+      ]
+    }
+  ]
+}

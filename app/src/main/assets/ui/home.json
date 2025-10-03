@@ -1,0 +1,25 @@
+{
+  "type": "LinearLayout",
+  "orientation": "vertical",
+  "padding": 16,
+  "children": [
+    {
+      "type": "TextView",
+      "text": "Добро пожаловать!",
+      "textSizeSp": 20,
+      "margin": {
+        "bottom": 12
+      }
+    },
+    {
+      "type": "Button",
+      "text": "Нажми меня",
+      "action": "openForm",
+      "width": "match",
+      "height": 48,
+      "margin": {
+        "top": 8
+      }
+    }
+  ]
+}

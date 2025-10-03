@@ -3,6 +3,7 @@ package ru.ravel.ulwms.service
 import io.reactivex.rxjava3.core.Single
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
+import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
@@ -18,7 +19,7 @@ interface ApiService {
 		@Url url: String,
 		@Header("Accept-Encoding") encoding: String = "identity",
 		@Header("Connection") connection: String = "close"
-	): Single<ResponseBody>
+	): Single<Response<ResponseBody>>
 
 	@POST
 	fun sendScan(

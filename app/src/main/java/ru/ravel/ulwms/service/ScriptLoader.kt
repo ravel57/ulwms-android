@@ -28,9 +28,8 @@ class ScriptLoader(
 		Thread.currentThread().contextClassLoader = dexLoader
 		try {
 			val scriptCls = dexLoader.loadClass(className)
-			val ctor = scriptCls.getDeclaredConstructor().apply { isAccessible = true }
-			val scriptObj = ctor.newInstance()
-
+//			val ctor = scriptCls.getDeclaredConstructor().apply { isAccessible = true }
+//			val scriptObj = ctor.newInstance()
 			val method = scriptCls.getMethod("run", Map::class.java)
 			val result = method.invoke(/*scriptObj*/null, input)
 			@Suppress("UNCHECKED_CAST")

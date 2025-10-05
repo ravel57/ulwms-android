@@ -7,6 +7,7 @@ import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.widget.TextView
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -23,8 +24,6 @@ import org.json.JSONObject
 import ru.ravel.lcpeandroid.AndroidOutputsRepository
 import ru.ravel.lcpeandroid.AndroidProjectRepository
 import ru.ravel.lcpeandroid.AndroidRunController
-import ru.ravel.lcpeandroid.RunEvents
-import ru.ravel.lcpecore.model.BlockType
 import ru.ravel.lcpecore.model.CoreBlock
 import ru.ravel.lcpecore.model.CoreProject
 import ru.ravel.ulwms.R
@@ -36,7 +35,7 @@ import ru.ravel.ulwms.service.HttpClient
 import ru.ravel.ulwms.service.InstalledProject
 import ru.ravel.ulwms.service.ScriptLoader
 import ru.ravel.ulwms.utils.JsonUiRenderer
-import java.io.File
+import java.util.UUID
 
 
 class MainActivity : AppCompatActivity() {
@@ -46,6 +45,8 @@ class MainActivity : AppCompatActivity() {
 	val viewModel: SharedViewModel by viewModels()
 
 	private val scope = MainScope()
+	private lateinit var controller: AndroidRunController
+	private lateinit var blockId: UUID
 
 
 	@SuppressLint("CheckResult")
@@ -63,7 +64,7 @@ class MainActivity : AppCompatActivity() {
 //			onCameraClick()
 //		}
 
-		lowCodeLogic("https://dl.ravel57.ru/OuFerKAoQl")
+		lowCodeLogic("https://dl.ravel57.ru/YGAKlFWBcc")
 	}
 
 
@@ -87,9 +88,9 @@ class MainActivity : AppCompatActivity() {
 	}
 
 
-//	urls:
+	// urls:
 //	test_http: https://dl.ravel57.ru/8hGhoRC8+8
-//	test_quality_check_android: https://dl.ravel57.ru/OuFerKAoQl
+//	test_quality_check_android: https://dl.ravel57.ru/YGAKlFWBcc
 	private fun lowCodeLogic(url: String) {
 		lifecycleScope.launch {
 			InstalledProject.install(this@MainActivity, url)
@@ -101,7 +102,7 @@ class MainActivity : AppCompatActivity() {
 						ScriptLoader(this@MainActivity),
 						installed.dexJar
 					)
-					val controller = AndroidRunController(
+					controller = AndroidRunController(
 						context = this@MainActivity,
 						projectRepo = repo,
 						outputsRepo = outputsRepo,
@@ -111,20 +112,17 @@ class MainActivity : AppCompatActivity() {
 					)
 
 					return@map Single.fromCallable {
-						controller.runAsync(installed.project, installed.projectJson, object : RunEvents {
+						controller.runAsync(installed.project, installed.projectJson, object : AndroidRunController.RunEvents {
 							override fun onStart(block: CoreBlock) {
+//								Log.i("STARTING", block.name)
 							}
 
 							override fun onOutput(block: CoreBlock, payload: Map<String, Any?>) {
-								if (block.type == BlockType.FORM) {
-									val code = File(block.codePath!!).readText()
-									runOnUiThread {
-										layoutByJson(code)
-									}
-								}
+								Log.i("OUTPUT", "${block.name}: $payload")
 							}
 
 							override fun onFinish(block: CoreBlock) {
+//								Log.i("FINISHING", block.name)
 							}
 
 							override fun onError(block: CoreBlock, error: Throwable) {
@@ -133,18 +131,21 @@ class MainActivity : AppCompatActivity() {
 
 							override fun onCompleted(project: CoreProject) {
 								Log.i("FirstFragment", "Проект отработал все что было")
-//								val holidays = project.blocks
-//									.firstOrNull { it.type == BlockType.FORM }
-//									?.outputsData
-//									?.flatMap { (it["holidays"] as? List<*> ?: emptyList()) }
-//									?.joinToString("\n")
-//									?: "Нет данных"
-//								runOnUiThread {
-//									val json = assets.open("ui/holidays.json").bufferedReader().use { it.readText() }
-//									val view = showJson(json)
-//									val textView = view.findViewWithTag<TextView>("holidaysTitle")
-//									textView.text = holidays
-//								}
+							}
+
+							@SuppressLint("SetTextI18n")
+							override fun onFormRequested(block: CoreBlock, specJson: String, initial: Map<String, Any?>) {
+								blockId = block.id
+								val counter = if ((initial["in0"] as? Map<String, Int?>)?.get("value") != null) {
+									(initial["in0"] as? Map<String, Int?>)?.get("value")
+								} else {
+									0
+								}
+								runOnUiThread {
+									val view = layoutByJson(specJson)
+									val textView = view.findViewWithTag<TextView>("counter")
+									textView?.text = "$counter из 6"
+								}
 							}
 						})
 						installed.project
@@ -177,32 +178,36 @@ class MainActivity : AppCompatActivity() {
 
 	private fun layoutByJson(jsonStr: String): View {
 		val actions: Map<String, () -> Unit> = mapOf(
-			LayoutAction.OPEN_FORM.action to {
-				val formJson = assets.open("ui/form.json").bufferedReader().use { it.readText() }
-				layoutByJson(formJson)
-			},
-			LayoutAction.BACK_TO_MAIN.action to {
-				val formJson = assets.open("ui/home.json").bufferedReader().use { it.readText() }
-				layoutByJson(formJson)
-			},
-			LayoutAction.REFRESH_HOLIDAYS.action to {
-				lowCodeLogic("https://dl.ravel57.ru/OuFerKAoQl")
-			},
+//			LayoutAction.OPEN_FORM.action to {
+//				val formJson = assets.open("ui/form.json").bufferedReader().use { it.readText() }
+//				layoutByJson(formJson)
+//			},
+//			LayoutAction.BACK_TO_MAIN.action to {
+//				val formJson = assets.open("ui/home.json").bufferedReader().use { it.readText() }
+//				layoutByJson(formJson)
+//			},
+//			LayoutAction.REFRESH_HOLIDAYS.action to {
+//				lowCodeLogic("https://dl.ravel57.ru/8hGhoRC8+8")
+//			},
 			LayoutAction.PRESSED_GOOD.action to {
-				lowCodeLogic("https://dl.ravel57.ru/OuFerKAoQl")
+				onSubmit(blockId, mapOf("value" to mapOf("norm" to true)))
 			},
 			LayoutAction.PRESSED_BAD.action to {
-				lowCodeLogic("https://dl.ravel57.ru/OuFerKAoQl")
+				onSubmit(blockId, mapOf("value" to mapOf("norm" to false)))
 			},
 		)
 		val spec = JSONObject(jsonStr)
 
 		@Suppress("UNCHECKED_CAST")
 		val view = JsonUiRenderer.render(this, spec, actions)
-
 		binding.root.removeAllViews()
 		binding.root.addView(view)
 		return view
+	}
+
+
+	fun onSubmit(blockId: UUID, values: Map<String, Any?>) {
+		controller.submitForm(blockId, values)
 	}
 
 

@@ -114,7 +114,6 @@ class MainActivity : AppCompatActivity() {
 					return@map Single.fromCallable {
 						controller.runAsync(installed.project, installed.projectJson, object : AndroidRunController.RunEvents {
 							override fun onStart(block: CoreBlock) {
-//								Log.i("STARTING", block.name)
 							}
 
 							override fun onOutput(block: CoreBlock, payload: Map<String, Any?>) {
@@ -122,7 +121,6 @@ class MainActivity : AppCompatActivity() {
 							}
 
 							override fun onFinish(block: CoreBlock) {
-//								Log.i("FINISHING", block.name)
 							}
 
 							override fun onError(block: CoreBlock, error: Throwable) {
@@ -136,15 +134,15 @@ class MainActivity : AppCompatActivity() {
 							@SuppressLint("SetTextI18n")
 							override fun onFormRequested(block: CoreBlock, specJson: String, initial: Map<String, Any?>) {
 								blockId = block.id
-								val counter = if ((initial["in0"] as? Map<String, Int?>)?.get("value") != null) {
-									(initial["in0"] as? Map<String, Int?>)?.get("value")
-								} else {
-									0
-								}
+								val map = (initial["in0"] as? Map<String, Map<String, Int>>)?.get("value") as? Map<String, Int?>
+								val counterValue = map?.get("done")
+								val needValue = map?.get("need")
+								val counter = counterValue ?: 0
+								val need = needValue ?: 0
 								runOnUiThread {
 									val view = layoutByJson(specJson)
 									val textView = view.findViewWithTag<TextView>("counter")
-									textView?.text = "$counter из 6"
+									textView?.text = "$counter из $need"
 								}
 							}
 						})
@@ -178,17 +176,6 @@ class MainActivity : AppCompatActivity() {
 
 	private fun layoutByJson(jsonStr: String): View {
 		val actions: Map<String, () -> Unit> = mapOf(
-//			LayoutAction.OPEN_FORM.action to {
-//				val formJson = assets.open("ui/form.json").bufferedReader().use { it.readText() }
-//				layoutByJson(formJson)
-//			},
-//			LayoutAction.BACK_TO_MAIN.action to {
-//				val formJson = assets.open("ui/home.json").bufferedReader().use { it.readText() }
-//				layoutByJson(formJson)
-//			},
-//			LayoutAction.REFRESH_HOLIDAYS.action to {
-//				lowCodeLogic("https://dl.ravel57.ru/8hGhoRC8+8")
-//			},
 			LayoutAction.PRESSED_GOOD.action to {
 				onSubmit(blockId, mapOf("value" to mapOf("norm" to true)))
 			},

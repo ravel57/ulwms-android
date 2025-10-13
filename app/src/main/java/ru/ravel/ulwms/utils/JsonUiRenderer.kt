@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.os.Build
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -85,13 +86,17 @@ object JsonUiRenderer {
 			"FrameLayout" -> FrameLayout(context)
 			"ScrollView" -> createScrollView(context, spec, actions)
 			"RecyclerView" -> createRecyclerView(context, spec, actions)
+			"EditText" -> createEditText(context, spec)
+			"Spinner" -> createSpinner(context, spec, actions)
+			"HorizontalLayout" -> createHorizontalLayout(context, spec, actions)
+			"CheckBox" -> createCheckBox(context, spec, actions)
+			"RadioButton" -> createRadioButton(context, spec, actions)
+			"RadioGroup" -> createRadioGroup(context, spec, actions)
 			else -> TextView(context).apply {
 				text = "Unknown type: $type"
 				setTextColor(Color.RED)
 			}
 		}
-
-
 		// tag как "id" из JSON
 		spec.optString("id").takeIf { it.isNotBlank() }?.let { view.tag = it }
 
@@ -109,6 +114,7 @@ object JsonUiRenderer {
 
 		return view
 	}
+
 
 	private fun createLinearLayout(
 		context: Context,
@@ -135,6 +141,7 @@ object JsonUiRenderer {
 		return ll
 	}
 
+
 	private fun createTextView(context: Context, spec: JSONObject): TextView {
 		return TextView(context).apply {
 			text = spec.optString("text", "")
@@ -142,6 +149,7 @@ object JsonUiRenderer {
 			setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat())
 		}
 	}
+
 
 	private fun createButton(
 		context: Context,
@@ -225,8 +233,6 @@ object JsonUiRenderer {
 	}
 
 
-	// ---------- Примеси / утилиты ----------
-
 	private fun buildLayoutParams(parent: ViewGroup?, spec: JSONObject): ViewGroup.LayoutParams {
 		val width = parseSize(spec.opt("width"), ViewGroup.LayoutParams.WRAP_CONTENT)
 		val height = parseSize(spec.opt("height"), ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -246,6 +252,7 @@ object JsonUiRenderer {
 		return base
 	}
 
+
 	private fun applyMargin(lp: ViewGroup.MarginLayoutParams, spec: JSONObject) {
 		val margin = spec.opt("margin")
 		if (margin is Number) {
@@ -260,6 +267,7 @@ object JsonUiRenderer {
 			)
 		}
 	}
+
 
 	private fun applyPadding(view: View, spec: JSONObject) {
 		val padding = spec.opt("padding")
@@ -276,6 +284,7 @@ object JsonUiRenderer {
 		}
 	}
 
+
 	private fun applyBackground(view: View, spec: JSONObject) {
 		val bg = spec.optString("background", "")
 		if (bg.isNotBlank()) {
@@ -286,9 +295,11 @@ object JsonUiRenderer {
 		}
 	}
 
+
 	private fun applyLinearLayoutAttrs(ll: LinearLayout, spec: JSONObject) {
 		// пока только orientation и weightSum заданы выше
 	}
+
 
 	private fun applyGravity(view: View, spec: JSONObject, parent: ViewGroup?) {
 		val g = spec.optString("gravity", "")
@@ -316,6 +327,7 @@ object JsonUiRenderer {
 		}
 	}
 
+
 	private fun parseSize(v: Any?, default: Int): Int {
 		return when (v) {
 			null -> default
@@ -330,10 +342,235 @@ object JsonUiRenderer {
 		}
 	}
 
+
 	private fun dp(value: Float): Int {
 		// context нет под рукой; используем mdpi=160dp базово: применим стандартный способ через  Resources?
 		// Здесь сделаем универсальный пересчёт через системные плотности:
 		val density = android.content.res.Resources.getSystem().displayMetrics.density
 		return (value * density).roundToInt()
 	}
+
+
+	private fun createEditText(context: Context, spec: JSONObject): EditText {
+		return EditText(context).apply {
+			hint = spec.optString("hint", "")
+			setText(spec.optString("text", ""))
+
+			// Размер шрифта
+			if (spec.has("textSizeSp")) {
+				val sp = spec.optDouble("textSizeSp", 16.0)
+				setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat())
+			}
+
+			// Цвет текста
+			if (spec.has("textColor")) {
+				try {
+					setTextColor(Color.parseColor(spec.getString("textColor")))
+				} catch (_: Throwable) { }
+			}
+
+			// Подсказка серым
+			if (spec.has("hintColor")) {
+				try {
+					setHintTextColor(Color.parseColor(spec.getString("hintColor")))
+				} catch (_: Throwable) { }
+			}
+
+			// inputType (например "text", "number", "password", "email")
+			inputType = when (spec.optString("inputType", "text")) {
+				"number" -> InputType.TYPE_CLASS_NUMBER
+				"password" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+				"email" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+				else -> InputType.TYPE_CLASS_TEXT
+			}
+
+			// padding и фон для красоты
+			setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+			setBackgroundColor(Color.parseColor(spec.optString("background", "#FFFFFF")))
+		}
+	}
+
+
+	private fun createSpinner(
+		context: Context,
+		spec: JSONObject,
+		actions: Map<String, () -> Unit>
+	): Spinner {
+		val spinner = Spinner(context)
+
+		// Получаем элементы из массива options
+		val items = mutableListOf<String>()
+		val options = spec.optJSONArray("options")
+		if (options != null) {
+			for (i in 0 until options.length()) {
+				items.add(options.getString(i))
+			}
+		}
+
+		// Создаём адаптер
+		val adapter = ArrayAdapter(
+			context,
+			android.R.layout.simple_spinner_dropdown_item,
+			items
+		)
+		spinner.adapter = adapter
+
+		// Устанавливаем выбранный элемент (если указан)
+		val selected = spec.optString("selected", "")
+		if (selected.isNotBlank()) {
+			val index = items.indexOf(selected)
+			if (index >= 0) spinner.setSelection(index)
+		}
+
+		// Можно задать id, чтобы потом получить выбранный пункт
+		val id = spec.optString("id")
+		if (id.isNotBlank()) spinner.tag = id
+
+		// Обработчик выбора — если задан action
+		val actionKey = spec.optString("action", null)
+		if (actionKey != null && actions.containsKey(actionKey)) {
+			spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+				override fun onItemSelected(
+					parent: AdapterView<*>,
+					view: View?,
+					position: Int,
+					id: Long
+				) {
+					actions[actionKey]?.invoke()
+				}
+
+				override fun onNothingSelected(parent: AdapterView<*>) {}
+			}
+		}
+
+		return spinner
+	}
+
+
+	private fun createHorizontalLayout(
+		context: Context,
+		spec: JSONObject,
+		actions: Map<String, () -> Unit>
+	): LinearLayout {
+		val ll = LinearLayout(context).apply {
+			orientation = LinearLayout.HORIZONTAL
+			if (spec.has("weightSum")) {
+				weightSum = spec.optDouble("weightSum", 0.0).toFloat()
+			}
+		}
+
+		val children = spec.optJSONArray("children")
+		if (children != null) {
+			for (i in 0 until children.length()) {
+				val childSpec = children.getJSONObject(i)
+				val childView = createView(context, childSpec, ll, actions)
+				ll.addView(childView, buildLayoutParams(ll, childSpec))
+			}
+		}
+
+		return ll
+	}
+
+
+	private fun createCheckBox(
+		context: Context,
+		spec: JSONObject,
+		actions: Map<String, () -> Unit>
+	): CheckBox {
+		return CheckBox(context).apply {
+			text = spec.optString("text", "")
+			isChecked = spec.optBoolean("checked", false)
+
+			// Цвет текста
+			if (spec.has("textColor")) {
+				try {
+					setTextColor(Color.parseColor(spec.getString("textColor")))
+				} catch (_: Throwable) {}
+			}
+
+			// id для доступа через tag
+			val id = spec.optString("id")
+			if (id.isNotBlank()) tag = id
+
+			// действие при клике
+			val actionKey = spec.optString("action", null)
+			if (actionKey != null && actions.containsKey(actionKey)) {
+				setOnCheckedChangeListener { _, _ ->
+					actions[actionKey]?.invoke()
+				}
+			}
+		}
+	}
+
+
+
+	private fun createRadioButton(
+		context: Context,
+		spec: JSONObject,
+		actions: Map<String, () -> Unit>
+	): RadioButton {
+		return RadioButton(context).apply {
+			text = spec.optString("text", "")
+			isChecked = spec.optBoolean("checked", false)
+
+			// Цвет текста
+			if (spec.has("textColor")) {
+				try {
+					setTextColor(Color.parseColor(spec.getString("textColor")))
+				} catch (_: Throwable) {}
+			}
+
+			// id
+			val id = spec.optString("id")
+			if (id.isNotBlank()) tag = id
+
+			// действие при выборе
+			val actionKey = spec.optString("action", null)
+			if (actionKey != null && actions.containsKey(actionKey)) {
+				setOnCheckedChangeListener { _, isChecked ->
+					if (isChecked) actions[actionKey]?.invoke()
+				}
+			}
+		}
+	}
+
+
+	private fun createRadioGroup(
+		context: Context,
+		spec: JSONObject,
+		actions: Map<String, () -> Unit>
+	): RadioGroup {
+		val rg = RadioGroup(context).apply {
+			orientation = when (spec.optString("orientation", "vertical")) {
+				"horizontal" -> RadioGroup.HORIZONTAL
+				else -> RadioGroup.VERTICAL
+			}
+		}
+
+		// Задаём id/тег, если есть
+		val id = spec.optString("id")
+		if (id.isNotBlank()) rg.tag = id
+
+		// Добавляем всех детей (RadioButton-ов)
+		val children = spec.optJSONArray("children")
+		if (children != null) {
+			for (i in 0 until children.length()) {
+				val childSpec = children.getJSONObject(i)
+				val rb = createRadioButton(context, childSpec, actions)
+				rg.addView(rb, buildLayoutParams(rg, childSpec))
+			}
+		}
+
+		// Обработчик смены выбранной кнопки
+		val actionKey = spec.optString("action", null)
+		if (actionKey != null && actions.containsKey(actionKey)) {
+			rg.setOnCheckedChangeListener { _, _ ->
+				actions[actionKey]?.invoke()
+			}
+		}
+
+		return rg
+	}
+
+
 }

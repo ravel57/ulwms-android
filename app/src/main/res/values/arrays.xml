@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="scan_modes_titles">
+        <item>Быстрое</item>
+        <item>Точное</item>
+    </string-array>
+
+    <string-array name="scan_modes_values">
+        <item>fast</item>
+        <item>accurate</item>
+    </string-array>
+</resources>

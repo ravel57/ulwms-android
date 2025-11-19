@@ -1,6 +1,11 @@
 [versions]
 activityCompose = "1.11.0"
-agp = "8.13.0"
+agp = "8.13.1"
+barcodeScanning = "17.3.0"
+cameraCore = "1.5.1"
+cameraCamera2 = "1.5.1"
+cameraLifecycle = "1.5.1"
+cameraView = "1.5.1"
 desugar_jdk_libs = "2.1.5"
 jacksonDatabind = "2.20.0"
 jacksonModuleKotlin = "2.20.0"
@@ -30,16 +35,23 @@ rxjavaVersion = "3.1.8"
 snakeyaml = "2.5"
 uiTestManifest = "1.9.2"
 uiToolingPreview = "1.9.2"
+preference = "1.2.1"
+workRuntimeKtx = "2.11.0"
 
 [libraries]
 adapter-rxjava3 = { module = "com.squareup.retrofit2:adapter-rxjava3", version.ref = "retrofitVersion" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraView" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraLifecycle" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "cameraCamera2" }
+androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-material3 = { module = "androidx.compose.material3:material3", version.ref = "material3" }
 androidx-multidex = { module = "androidx.multidex:multidex", version.ref = "multidex" }
 androidx-ui = { module = "androidx.compose.ui:ui", version.ref = "uiTestManifest" }
 androidx-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "uiTestManifest" }
 androidx-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "uiTestManifest" }
+barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "barcodeScanning" }
 converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "retrofitVersion" }
 converter-scalars = { module = "com.squareup.retrofit2:converter-scalars", version.ref = "retrofitVersion" }
 desugar_jdk_libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugar_jdk_libs" }
@@ -67,6 +79,8 @@ rxjava = { module = "io.reactivex.rxjava3:rxjava", version.ref = "rxjava" }
 rxjava-v318 = { module = "io.reactivex.rxjava3:rxjava", version.ref = "rxjavaVersion" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview", version.ref = "uiToolingPreview" }
+androidx-preference = { group = "androidx.preference", name = "preference", version.ref = "preference" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntimeKtx" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory android:title="Основное">
+
+<!--        <SwitchPreferenceCompat-->
+<!--            android:key="dark_mode"-->
+<!--            android:title="Темная тема"-->
+<!--            android:defaultValue="false" />-->
+
+        <EditTextPreference
+            android:key="server_url"
+            android:title="URL сервера"
+            android:dialogTitle="Введите URL"
+            app:useSimpleSummaryProvider="true"
+            android:defaultValue="wms-arc.ravel57.ru" />
+
+        <EditTextPreference
+            android:key="user_id"
+            android:title="ID пользователя"
+            android:dialogTitle="Введите ID пользователя"
+            app:useSimpleSummaryProvider="true"
+            android:defaultValue="0" />
+
+    </PreferenceCategory>
+
+<!--    <PreferenceCategory android:title="Сканирование">-->
+
+<!--        <SwitchPreferenceCompat-->
+<!--            android:key="vibration"-->
+<!--            android:title="Вибрация при сканировании"-->
+<!--            android:defaultValue="true" />-->
+
+<!--        <ListPreference-->
+<!--            android:key="scan_quality"-->
+<!--            android:title="Качество сканирования"-->
+<!--            android:entries="@array/scan_modes_titles"-->
+<!--            android:entryValues="@array/scan_modes_values"-->
+<!--            app:useSimpleSummaryProvider="true"-->
+<!--            android:defaultValue="fast" />-->
+<!--    </PreferenceCategory>-->
+
+</PreferenceScreen>

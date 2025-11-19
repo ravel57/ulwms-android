@@ -69,6 +69,13 @@ object JsonUiRenderer {
 		}
 	}
 
+	fun getTypeByTag(
+		context: Context,
+		spec: JSONObject,
+	): Class<out View> {
+		return createView(context, spec, null, mapOf())::class.java
+	}
+
 	// ---------- Внутренности ----------
 
 	@SuppressLint("SetTextI18n")
@@ -78,8 +85,7 @@ object JsonUiRenderer {
 		parent: ViewGroup?,
 		actions: Map<String, () -> Unit>
 	): View {
-		val type = spec.optString("type")
-		val view: View = when (type) {
+		val view: View = when (val type = spec.optString("type")) {
 			"LinearLayout" -> createLinearLayout(context, spec, actions)
 			"TextView" -> createTextView(context, spec)
 			"Button" -> createButton(context, spec, actions)
@@ -92,6 +98,7 @@ object JsonUiRenderer {
 			"CheckBox" -> createCheckBox(context, spec, actions)
 			"RadioButton" -> createRadioButton(context, spec, actions)
 			"RadioGroup" -> createRadioGroup(context, spec, actions)
+			"SubmitButton" -> createSubmitButton(context, spec, actions)
 			else -> TextView(context).apply {
 				text = "Unknown type: $type"
 				setTextColor(Color.RED)
@@ -366,14 +373,16 @@ object JsonUiRenderer {
 			if (spec.has("textColor")) {
 				try {
 					setTextColor(Color.parseColor(spec.getString("textColor")))
-				} catch (_: Throwable) { }
+				} catch (_: Throwable) {
+				}
 			}
 
 			// Подсказка серым
 			if (spec.has("hintColor")) {
 				try {
 					setHintTextColor(Color.parseColor(spec.getString("hintColor")))
-				} catch (_: Throwable) { }
+				} catch (_: Throwable) {
+				}
 			}
 
 			// inputType (например "text", "number", "password", "email")
@@ -485,7 +494,8 @@ object JsonUiRenderer {
 			if (spec.has("textColor")) {
 				try {
 					setTextColor(Color.parseColor(spec.getString("textColor")))
-				} catch (_: Throwable) {}
+				} catch (_: Throwable) {
+				}
 			}
 
 			// id для доступа через tag
@@ -503,7 +513,6 @@ object JsonUiRenderer {
 	}
 
 
-
 	private fun createRadioButton(
 		context: Context,
 		spec: JSONObject,
@@ -517,7 +526,8 @@ object JsonUiRenderer {
 			if (spec.has("textColor")) {
 				try {
 					setTextColor(Color.parseColor(spec.getString("textColor")))
-				} catch (_: Throwable) {}
+				} catch (_: Throwable) {
+				}
 			}
 
 			// id
@@ -546,11 +556,9 @@ object JsonUiRenderer {
 				else -> RadioGroup.VERTICAL
 			}
 		}
-
 		// Задаём id/тег, если есть
 		val id = spec.optString("id")
 		if (id.isNotBlank()) rg.tag = id
-
 		// Добавляем всех детей (RadioButton-ов)
 		val children = spec.optJSONArray("children")
 		if (children != null) {
@@ -560,7 +568,6 @@ object JsonUiRenderer {
 				rg.addView(rb, buildLayoutParams(rg, childSpec))
 			}
 		}
-
 		// Обработчик смены выбранной кнопки
 		val actionKey = spec.optString("action", null)
 		if (actionKey != null && actions.containsKey(actionKey)) {
@@ -568,9 +575,27 @@ object JsonUiRenderer {
 				actions[actionKey]?.invoke()
 			}
 		}
-
 		return rg
 	}
 
+
+	private fun createSubmitButton(
+		context: Context,
+		spec: JSONObject,
+		actions: Map<String, () -> Unit>
+	): Button {
+		return Button(context).apply {
+			text = spec.optString("text", "Submit")
+			val submitKey = spec.optString("submitAction", null)
+			setOnClickListener {
+				if (submitKey != null && actions.containsKey(submitKey)) {
+					actions[submitKey]?.invoke()  // 🔥 вызывает только submitFromGroovy
+				} else {
+					Toast.makeText(context, "Нет submitAction='$submitKey'", Toast.LENGTH_SHORT)
+						.show()
+				}
+			}
+		}
+	}
 
 }

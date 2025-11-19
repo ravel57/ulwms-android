@@ -2,12 +2,16 @@ package ru.ravel.ulwms.service
 
 import android.annotation.SuppressLint
 import android.content.Context
+import androidx.preference.PreferenceManager
 import io.reactivex.rxjava3.core.Flowable
 import io.reactivex.rxjava3.core.Single
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ru.ravel.lcpeandroid.ProjectLoader
 import ru.ravel.lcpecore.model.CoreProject
 import ru.ravel.ulwms.utils.sha256
 import java.io.File
+import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipFile
 import javax.net.ssl.SSLProtocolException
 
@@ -23,6 +27,8 @@ data class InstalledProject(
 
 	companion object {
 
+		private val installLock = ReentrantLock()
+
 		private fun sanitizePath(raw: String?): String {
 			if (raw == null) return ""
 			val cleaned = raw.replace(
@@ -33,10 +39,10 @@ data class InstalledProject(
 		}
 
 
-		fun loadLastInstalled(context: Context): InstalledProject {
-			val projectsDir = File(context.cacheDir, "projects").apply { mkdirs() }
-			return loadLastInstalledFromDisk(context, projectsDir)
-		}
+//		fun loadLastInstalled(context: Context): InstalledProject {
+//			val projectsDir = File(context.cacheDir, "projects").apply { mkdirs() }
+//			return loadLastInstalledFromDisk(context, projectsDir)
+//		}
 
 
 		private fun loadLastInstalledFromDisk(context: Context, projectsDir: File): InstalledProject {
@@ -69,7 +75,8 @@ data class InstalledProject(
 			}
 
 			// Ищем groovy-blocks-dex.jar: сперва в codeCache, затем в самом проекте
-			val groovyRoot = File(context.codeCacheDir, "groovy")
+			val groovyRoot = File(context.noBackupFilesDir, "groovy")
+			groovyRoot.mkdirs()
 
 			val projectDexDirs = groovyRoot.listFiles()
 				?.filter { it.isDirectory && it.name.startsWith("$projectName-") }
@@ -94,7 +101,6 @@ data class InstalledProject(
 				project = project
 			)
 		}
-
 
 
 		private fun normalizeToAbsSmart(base: File, raw: String?): String? {
@@ -123,54 +129,54 @@ data class InstalledProject(
 			val tmpFile = File(projectsDir, "tmp.part").apply { delete() }
 
 			return downloadWithRetries(url, tmpFile)
-				.map { zipFile ->
-					if (zipFile.length() == 0L) {
-						return@map loadLastInstalledFromDisk(context, projectsDir)
+				.flatMap { zipFile ->
+					Single.fromCallable {
+						installLock.lock()
+						try {
+							if (zipFile.length() == 0L) {
+								return@fromCallable loadLastInstalledFromDisk(context, projectsDir)
+							}
+
+							val projectName = zipFile.nameWithoutExtension
+							val projectDir = File(projectsDir, projectName)
+							if (projectDir.exists()) projectDir.deleteRecursively()
+							require(projectDir.mkdirs())
+
+							unzipTo(zipFile, projectDir)
+
+							val json = File(projectDir, "$projectName.json")
+							require(json.exists())
+
+							val dexSrc = File(projectDir, "groovy-blocks-dex.jar")
+							require(dexSrc.exists())
+
+							val versionHash = dexSrc.sha256().take(8)
+
+							val groovyRoot = File(context.noBackupFilesDir, "groovy")
+							groovyRoot.mkdirs()
+							groovyRoot.listFiles()
+								?.filter { it.isDirectory && it.name.startsWith("$projectName-") }
+								?.forEach { it.deleteRecursively() }
+
+							val dexCacheDir = File(groovyRoot, "$projectName-$versionHash").apply { mkdirs() }
+							val dexCacheFile = File(dexCacheDir, "groovy-blocks-dex.jar")
+							dexSrc.copyTo(dexCacheFile, overwrite = true)
+							dexCacheFile.setWritable(false, false)
+							dexCacheFile.setReadable(true, false)
+							dexCacheFile.setExecutable(false, false)
+
+							val project = ProjectLoader.loadProjectFromFile(json)
+							project.baseDir = projectDir
+							project.blocks.forEach { b ->
+								b.codePath = normalizeToAbsSmart(projectDir, b.codePath)
+								b.subProjectPath = normalizeToAbsSmart(projectDir, b.subProjectPath) ?: ""
+							}
+
+							InstalledProject(projectDir, json, dexCacheFile, project)
+						} finally {
+							installLock.unlock()
+						}
 					}
-
-					val projectName = zipFile.nameWithoutExtension
-					val projectDir = File(projectsDir, projectName)
-					if (projectDir.exists()) projectDir.deleteRecursively()
-					require(projectDir.mkdirs()) { "Не удалось создать каталог проекта $projectDir" }
-
-					unzipTo(zipFile, projectDir)
-
-					val projectJson = File(projectDir, "${projectName}.json")
-					require(projectJson.exists()) { "Не найден ${projectName}.json" }
-
-					val dexJarSrc = File(projectDir, "groovy-blocks-dex.jar")
-					require(dexJarSrc.exists()) { "Не найден groovy-blocks-dex.jar" }
-
-					// версию берём из самого dex/zip
-					val versionHash = dexJarSrc.sha256().take(8)
-
-					// подчистим старые версии этого проекта в codeCache, чтобы не плодить мусор
-					val groovyRoot = File(context.codeCacheDir, "groovy")
-					groovyRoot.listFiles()
-					?.filter { it.isDirectory && it.name.startsWith("$projectName-") }
-					?.forEach { it.deleteRecursively() }
-
-					// кладём dex в уникальную папку вида groovy/<projectName>-<hash>/
-					val dexCacheDir = File(groovyRoot, "$projectName-$versionHash").apply { mkdirs() }
-					val dexCacheFile = File(dexCacheDir, "groovy-blocks-dex.jar")
-					dexJarSrc.inputStream().use { input ->
-						dexCacheFile.outputStream().use { output -> input.copyTo(output) }
-					}
-					dexCacheFile.setReadable(true, false)
-					dexCacheFile.setWritable(false, false)
-					val project = ProjectLoader.loadProjectFromFile(projectJson)
-					project.baseDir = projectDir
-					project.blocks.forEach { b ->
-						b.codePath = normalizeToAbsSmart(projectDir, b.codePath)
-						b.subProjectPath = normalizeToAbsSmart(projectDir, b.subProjectPath) ?: ""
-					}
-
-					InstalledProject(
-						baseDir = projectDir,
-						projectJson = projectJson,
-						dexJar = dexCacheFile,
-						project = project
-					)
 				}
 		}
 
@@ -189,7 +195,6 @@ data class InstalledProject(
 							dest.createNewFile()
 							return@map dest
 						}
-
 						body.use {
 							val cd = response.headers()["Content-Disposition"]
 							val realName = cd
@@ -200,7 +205,7 @@ data class InstalledProject(
 							val outFile = File(dest.parentFile, realName)
 							val tmp = File(outFile.parentFile, "${outFile.name}.part")
 								.apply { delete() }
-							tmp.outputStream().use { out -> body?.byteStream()?.copyTo(out) }
+							tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
 							if (outFile.exists()) {
 								outFile.delete()
 							}
@@ -252,30 +257,114 @@ data class InstalledProject(
 				.toList()
 		}
 
+		private const val PREF_ACTIVE_PROJECT = "active_project_name"
+
+		/**
+		 * Сохранить имя активного проекта (имя каталога в cacheDir/projects).
+		 * Например, если zip назывался warehouse_1.zip, то projectName = "warehouse_1".
+		 */
+		fun setActiveProject(context: Context, projectName: String) {
+			val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+			prefs.edit()
+				.putString(PREF_ACTIVE_PROJECT, projectName)
+				.apply()
+		}
+
+		/**
+		 * Загрузить активный проект, если он есть и каталог существует.
+		 * Если нет — откатиться к последнему установленному (по времени).
+		 */
+		fun loadActive(context: Context): InstalledProject? {
+			val projectsDir = File(context.cacheDir, "projects").apply { mkdirs() }
+			val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+			val activeName = prefs.getString(PREF_ACTIVE_PROJECT, null)?.trim().orEmpty()
+			if (activeName.isNotEmpty()) {
+				val dir = File(projectsDir, activeName)
+				if (dir.isDirectory) {
+					return loadProjectFromDir(context, dir)
+				}
+			}
+			return null
+		}
+
+
+
+		fun clearActiveProject(context: Context) {
+			val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+			prefs.edit().remove(PREF_ACTIVE_PROJECT).apply()
+
+			// Также удаляем last_scenario_name, чтобы не было закрепления старого
+//			prefs.edit().remove("last_scenario_name").apply()
+		}
+
+
+		private fun loadProjectFromDir(context: Context, projectDir: File): InstalledProject {
+			val projectName = projectDir.name
+
+			val projectJson = File(projectDir, "$projectName.json")
+				.takeIf { it.exists() }
+				?: projectDir.listFiles()
+					?.firstOrNull { it.isFile && it.extension.equals("json", true) }
+				?: error("В каталоге $projectDir нет json-файла проекта")
+
+			val project = ProjectLoader.loadProjectFromFile(projectJson)
+			project.baseDir = projectDir
+			project.blocks.forEach { b ->
+				b.codePath = normalizeToAbsSmart(projectDir, b.codePath)
+				b.subProjectPath = normalizeToAbsSmart(projectDir, b.subProjectPath) ?: ""
+			}
+
+			// Ищем groovy-blocks-dex.jar: сперва в codeCache, затем в самом проекте
+			val groovyRoot = File(context.noBackupFilesDir, "groovy")
+			groovyRoot.mkdirs()
+
+			val projectDexDirs = groovyRoot.listFiles()
+				?.filter { it.isDirectory && it.name.startsWith("$projectName-") }
+				.orEmpty()
+
+			val latestDexDir = projectDexDirs.maxByOrNull { it.lastModified() }
+			val dexFromCache = latestDexDir
+				?.let { File(it, "groovy-blocks-dex.jar") }
+
+			val dexFromProject = File(projectDir, "groovy-blocks-dex.jar")
+
+			val dexJar = when {
+				dexFromCache?.exists() == true -> dexFromCache
+				dexFromProject.exists() -> dexFromProject
+				else -> error("Не найден groovy-blocks-dex.jar для проекта $projectName")
+			}
+
+			return InstalledProject(
+				baseDir = projectDir,
+				projectJson = projectJson,
+				dexJar = dexJar,
+				project = project
+			)
+		}
 
 	}
 
 
-	private fun resolveSubFile(outerBaseDir: File?, raw: String): Pair<File?, List<String>> {
-		val base = outerBaseDir ?: File(".")
-		val tried = mutableListOf<String>()
-		val p = raw.replace('\\', '/').trim()
-		fun tryFile(f: File): File? {
-			val abs = f.normalize().absoluteFile
-			tried += abs.path
-			return abs.takeIf { it.exists() }
-		}
-		File(p).takeIf { it.isAbsolute }?.let { tryFile(it) }?.let { return it to tried }
-		tryFile(File(base, p))?.let { return it to tried }
-		if (!p.endsWith(".json", ignoreCase = true)) {
-			tryFile(File(base, "$p.json"))?.let { return it to tried }
-		}
-		val withStd = if (p.startsWith("stdlib/")) p else "stdlib/$p"
-		tryFile(File(base, withStd))?.let { return it to tried }
-		if (!withStd.endsWith(".json", ignoreCase = true)) {
-			tryFile(File(base, "$withStd.json"))?.let { return it to tried }
-		}
-		return null to tried
-	}
+//	private fun resolveSubFile(outerBaseDir: File?, raw: String): Pair<File?, List<String>> {
+//		val base = outerBaseDir ?: File(".")
+//		val tried = mutableListOf<String>()
+//		val p = raw.replace('\\', '/').trim()
+//		fun tryFile(f: File): File? {
+//			val abs = f.normalize().absoluteFile
+//			tried += abs.path
+//			return abs.takeIf { it.exists() }
+//		}
+//		File(p).takeIf { it.isAbsolute }?.let { tryFile(it) }?.let { return it to tried }
+//		tryFile(File(base, p))?.let { return it to tried }
+//		if (!p.endsWith(".json", ignoreCase = true)) {
+//			tryFile(File(base, "$p.json"))?.let { return it to tried }
+//		}
+//		val withStd = if (p.startsWith("stdlib/")) p else "stdlib/$p"
+//		tryFile(File(base, withStd))?.let { return it to tried }
+//		if (!withStd.endsWith(".json", ignoreCase = true)) {
+//			tryFile(File(base, "$withStd.json"))?.let { return it to tried }
+//		}
+//		return null to tried
+//	}
 
 }

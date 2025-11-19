@@ -6,5 +6,6 @@
     <string name="second_fragment_label">Second Fragment</string>
     <string name="next">Next</string>
     <string name="previous">Previous</string>
-    <string name="api_url">wms-arc.ravel57.ru</string>
+    <string name="driver_api_url">wms-arc.ravel57.ru</string>
+    <string name="api_url">wms.ravel57.ru</string>
 </resources>

@@ -43,6 +43,7 @@ import ru.ravel.ulwms.lcpe.AndroidGroovyExecutor
 import ru.ravel.ulwms.service.HttpClient
 import ru.ravel.ulwms.service.InstalledProject
 import ru.ravel.ulwms.service.ScriptLoader
+import ru.ravel.ulwms.service.TaskPollingService
 import ru.ravel.ulwms.service.UpdateCheckWorker
 import ru.ravel.ulwms.utils.JsonUiRenderer
 import java.lang.Byte
@@ -77,8 +78,7 @@ import kotlin.takeIf
 class MainActivity : AppCompatActivity() {
 
 	private lateinit var appBarConfiguration: AppBarConfiguration
-	private lateinit var binding: ActivityMainBinding
-	private val viewModel: SharedViewModel by viewModels()
+	lateinit var binding: ActivityMainBinding
 
 	private val scope = MainScope()
 	private lateinit var controller: AndroidRunController
@@ -133,6 +133,7 @@ class MainActivity : AppCompatActivity() {
 		runUpdateCheckOnce()
 		startUpdateScheduler()
 		loadScenario()
+		startForegroundService(Intent(this, TaskPollingService::class.java))
 	}
 
 
@@ -145,12 +146,16 @@ class MainActivity : AppCompatActivity() {
 
 
 	private fun loadScenario() {
+		if (InstalledProject.loadActive(this) == null) {
+			showNoTasksScreen()
+			return
+		}
 		lifecycleScope.launch {
 			try {
 				val installed = withContext(Dispatchers.IO) {
-					InstalledProject.loadLastInstalled(this@MainActivity)
+					InstalledProject.loadActive(this@MainActivity)
 				}
-				lowCodeLogic(installed)
+				lowCodeLogic(installed!!)
 			} catch (e: Exception) {
 				Log.e("MainActivity", "Ошибка загрузки сценария", e)
 			}
@@ -158,13 +163,22 @@ class MainActivity : AppCompatActivity() {
 	}
 
 
+	fun showNoTasksScreen() {
+		binding.container.removeAllViews()
+		val tv = TextView(this).apply {
+			text = "Задач нет"
+			textSize = 22f
+			setPadding(60, 100, 60, 100)
+		}
+		binding.container.addView(tv)
+	}
+
+
 	override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
 		super.onActivityResult(requestCode, resultCode, data)
-
 		if (requestCode == 1001 && resultCode == RESULT_OK) {
 			val qr = data?.getStringExtra("qr")?.trim()
 				?: return
-			viewModel.instruction.value = qr
 			onCameraClick(qr)
 		}
 	}
@@ -195,13 +209,9 @@ class MainActivity : AppCompatActivity() {
 		projectCompleted = false
 		currentFormBlock = null
 		currentFormInitial = emptyMap()
-		installedProject = installed   // важно для Groovy
-
-		// запоминаем "поколение" этого запуска
+		installedProject = installed
 		val myRunId = ++runId
-
 		lifecycleScope.launch(Dispatchers.Main) {
-			// Создаем controller в UI-потоке
 			val repo = AndroidProjectRepository(this@MainActivity)
 			val outputsRepo = AndroidOutputsRepository()
 			scriptLoader = ScriptLoader(this@MainActivity)
@@ -210,7 +220,6 @@ class MainActivity : AppCompatActivity() {
 				scriptLoader,
 				installed.dexJar
 			)
-
 			val localController = AndroidRunController(
 				context = this@MainActivity,
 				projectRepo = repo,
@@ -221,7 +230,6 @@ class MainActivity : AppCompatActivity() {
 			)
 			controller = localController
 
-			// true, если колбэк пришёл от устаревшего запуска
 			fun isStale(): Boolean {
 				return (myRunId != runId) || (controller !== localController)
 			}
@@ -251,6 +259,7 @@ class MainActivity : AppCompatActivity() {
 						if (isStale()) {
 							return
 						}
+						Log.d("onFinish", "Блок ${block.id} закончил")
 					}
 
 					override fun onError(block: CoreBlock, error: Throwable) {
@@ -566,13 +575,18 @@ class MainActivity : AppCompatActivity() {
 	@SuppressLint("CheckResult")
 	private fun onCameraClick(value: String = "") {
 		val prefs = PreferenceManager.getDefaultSharedPreferences(this)
-		val host = prefs.getString("server_url", getString(R.string.api_url))!!
+		val host = prefs.getString("driver_server_url", getString(R.string.driver_api_url))!!
 		val userId = prefs.getString("user_id", "0")?.toLong()!!
 		HttpClient().sendScan(host, value, userId)
 			.observeOn(AndroidSchedulers.mainThread())
 			.subscribe(
-				{ response -> viewModel.instruction.value = response.message },
-				{ e -> e.printStackTrace() }
+				{ response ->
+					onSubmit(blockId, mapOf("scanned" to response)) /*FIXME че-то передавать*/
+				},
+				{ e ->
+					e.printStackTrace()
+					onSubmit(blockId, mapOf("scanned" to "failed"))
+				}
 			)
 	}
 

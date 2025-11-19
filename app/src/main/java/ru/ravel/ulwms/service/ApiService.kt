@@ -27,4 +27,14 @@ interface ApiService {
 		@Query("userId") userId: Long,
 		@Body body: RequestBody
 	): Single<ScanResponse>
+
+	@GET
+	fun getActiveScript(
+		@Url url: String
+	): Single<ResponseBody>
+
+	@GET
+	fun hasNewTasks(
+		@Url url: String,
+	) : Single<ResponseBody>
 }

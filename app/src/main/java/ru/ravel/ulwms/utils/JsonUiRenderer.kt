@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.ravel.ulwms.activity.MainActivity
 import kotlin.math.roundToInt
 
 /**
@@ -99,6 +100,7 @@ object JsonUiRenderer {
 			"RadioButton" -> createRadioButton(context, spec, actions)
 			"RadioGroup" -> createRadioGroup(context, spec, actions)
 			"SubmitButton" -> createSubmitButton(context, spec, actions)
+			"FAB" -> commandFab(context, spec)
 			else -> TextView(context).apply {
 				text = "Unknown type: $type"
 				setTextColor(Color.RED)
@@ -597,5 +599,34 @@ object JsonUiRenderer {
 			}
 		}
 	}
+
+
+	private fun commandFab(context: Context, spec: JSONObject): View {
+		val act = MainActivity.instance ?: return View(context)
+
+		act.runOnUiThread {
+			val fab = act.binding.fab
+			fab.visibility = View.VISIBLE
+
+			// Иконка
+			val icon = spec.optString("icon", "")
+			if (icon.isNotBlank()) {
+				val resId = context.resources.getIdentifier(icon, "drawable", context.packageName)
+				if (resId != 0) fab.setImageResource(resId)
+			}
+
+			// Цвет
+			if (spec.has("background")) {
+				try {
+					fab.backgroundTintList =
+						android.content.res.ColorStateList.valueOf(Color.parseColor(spec.getString("background")))
+				} catch (_: Throwable) {}
+			}
+		}
+
+		// Возвращаем невидимую заглушку, чтобы JSON-дерево не ломалось
+		return View(context).apply { visibility = View.GONE }
+	}
+
 
 }

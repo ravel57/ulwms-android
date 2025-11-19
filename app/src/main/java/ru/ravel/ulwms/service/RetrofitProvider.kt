@@ -33,8 +33,11 @@ object RetrofitProvider {
 		return OkHttpClient.Builder()
 			.connectionSpecs(listOf(spec, ConnectionSpec.CLEARTEXT))
 			.protocols(listOf(Protocol.HTTP_1_1))
-			.retryOnConnectionFailure(false)
-			.connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
+			.connectTimeout(60, TimeUnit.SECONDS)
+			.readTimeout(120, TimeUnit.SECONDS)
+			.writeTimeout(120, TimeUnit.SECONDS)
+			.retryOnConnectionFailure(true)
+			.connectionPool(ConnectionPool(0, 5, TimeUnit.MINUTES))
 			.build()
 	}
 
